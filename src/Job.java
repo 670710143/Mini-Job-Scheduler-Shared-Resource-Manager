@@ -9,23 +9,17 @@
  */
 public class Job {
 
-    /** รหัสงาน เช่น J01 — ไม่ซ้ำกันภายในหนึ่งไฟล์ workload */
     public final String id;
 
-    /** เวลาที่งานควรเข้าสู่ระบบ นับจากวินาทีที่โปรแกรมเริ่ม (มิลลิวินาที) */
-    public final long arrivalMs;
+    public final long arrivalMs; //เวลาที่งานเข้าสู่ระบบ นับตั้งแต่โปรแกรมเริ่ม
+    public final int priority; // ลำดับความสำคัญ น้อย = priority สูง
 
-    /** ระดับความสำคัญ โดย 1 คือสูงสุด ตัวเลขยิ่งมากยิ่งสำคัญน้อย */
-    public final int priority;
+    public final long workMs; // ระยะเวลาของงานหลักก่อนของ resource
 
-    /** ระยะเวลาของงานหลัก ก่อนขอใช้ทรัพยากรร่วม (มิลลิวินาที) */
-    public final long workMs;
+    public final ResourceType resource; //resource รวมที่ต้องใช้ 
 
-    /** ทรัพยากรร่วมที่ต้องใช้ หรือ NONE ถ้าไม่ต้องใช้ */
-    public final ResourceType resource;
 
-    /** ระยะเวลาที่ถือครองทรัพยากร (มิลลิวินาที) เป็น 0 เสมอเมื่อ resource เป็น NONE */
-    public final long resourceMs;
+    public final long resourceMs; // ระยะเวลาครอง resource จะ = 0 เสมอเมื่อ resource เป็น NONE
 
     /**
      * ลำดับที่งานนี้ปรากฏในไฟล์ workload เริ่มจาก 0
@@ -47,7 +41,32 @@ public class Job {
 
     // =====================================================================
     // TODO (นักศึกษา): เพิ่มฟิลด์สำหรับเก็บค่าที่ใช้วัดผลของงานชิ้นนี้เอง
-    //
+
+    //  เวลาที่เข้าสู่ระบบจริง
+    public volatile long actualArrivalMs = -1;
+    // เวลาที่เริ่มถูกทำโดย Worker
+    public volatile long startTimeMs = -1;
+    // เวลาที่เริ่มรอคิวทรัพยากร/Semaphore 
+    public volatile long resourceWaitStartMs = -1;
+    // ระยะเวลารอคิวทรัพยากรรวม 
+    public volatile long resourceWaitMs = 0;
+    // เวลาที่งานชิ้นนี้ทำเสร็จสมบูรณ์ 
+    public volatile long completionTimeMs = -1;
+
+    public long waitingTime(){
+        if(startTimeMs >=0 || actualArrivalMs >=0) 
+            return startTimeMs - actualArrivalMs;
+        return 0;
+    }
+    public long turnaroundTime() {
+        if (completionTimeMs >= 0 || actualArrivalMs >= 0) 
+            return completionTimeMs - actualArrivalMs;
+        return 0;
+    }
+    public long getResourceWaitTime() {
+        return resourceWaitMs;
+    }
+
     // ค่าที่โครงงานต้องการ (ดูหัวข้อ 8 ของเอกสารโจทย์):
     //   - เวลาที่เข้าสู่ระบบจริง
     //   - เวลาที่เริ่มถูกทำโดย Worker
@@ -59,6 +78,11 @@ public class Job {
     //      กับที่ปรากฏใน log ทำให้ค่าที่วัดกับ log ตรวจสอบกันได้)
     //   2. ฟิลด์ใดถูกเขียนโดย Thread หนึ่งแล้วอ่านโดยอีก Thread หนึ่ง
     //      และต้องป้องกันอย่างไร
+    /*    ans  ฟิลด์กลุ่มค่าวัดผล (actualArrivalMs, startTimeMs, completionTimeMs, 
+                resourceWaitMs) ถูกเขียนโดย JobGenerator / Worker Thread และถูกอ่านภายหลังโดย Statistics หรือ Monitor Thread    
+                การป้องกัน: ใช้ Keyword volatile สำหรับฟิลด์วัดผลเหล่านี้Keyword volatile จะช่วยรับประกัน Memory Visibility ทำให้ Thread อื่นๆ 
+                อ่านค่าอัปเดตล่าสุดได้อย่างถูกต้องทันทีโดยไม่ต้องใช้ heavy-weight Synchronization
+    */
     //   3. ผลที่ได้ต้องสอดคล้องกับสมการตรวจสอบในหัวข้อ 8:
     //      Turnaround = Waiting + workMs + Resource Wait + resourceMs
     // =====================================================================
