@@ -1,5 +1,4 @@
 /**
-/**
  * คิวงานที่พร้อมถูกหยิบไปทำ
  *
  * ===== ไฟล์นี้เป็นโครงเปล่า นักศึกษาต้องเขียนเอง =====
@@ -18,113 +17,78 @@
  * จะออกแบบเป็นคลาสเดียวที่รับนโยบายเข้ามา หรือแยกเป็นสองคลาส
  * หรือใช้โครงสร้างข้อมูลสำเร็จรูปของ Java ก็ได้ ขอให้อธิบายเหตุผลได้ใน Demo
  */
-public class ReadyQueue {
-
-    // TODO: เก็บนโยบาย (Config.Policy) และโครงสร้างข้อมูลที่ใช้เก็บงาน
-
-    public ReadyQueue(Config.Policy policy) {
-        // TODO
-        throw new UnsupportedOperationException("TODO: ReadyQueue constructor");
-    }
-
-    /** ใส่งานเข้าคิว เรียกโดย Scheduler Thread */
-    public void add(Job job) {
-        // TODO
-        throw new UnsupportedOperationException("TODO: ReadyQueue.add");
-    }
-
-    /**
-     * หยิบงานถัดไปตามนโยบาย เรียกโดย Worker Thread
-     *
-     * ถ้ายังไม่มีงาน ต้องรอโดยไม่กิน CPU
-     * ต้องคิดด้วยว่าจะบอก Worker อย่างไรเมื่อไม่มีงานเหลือแล้วและควรหยุดทำงาน
-     */
-    public Job take() throws InterruptedException {
-        // TODO
-        throw new UnsupportedOperationException("TODO: ReadyQueue.take");
-    }
-
-    /** จำนวนงานที่รออยู่ตอนนี้ ใช้โดย Monitor — ต้องอ่านได้อย่างปลอดภัย */
-    public int size() {
-        // TODO
-        throw new UnsupportedOperationException("TODO: ReadyQueue.size");
-    }
-}
-*/
-import java.util.ArrayDeque;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.Objects;
 import java.util.PriorityQueue;
-import java.util.Queue;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
-
+ 
 /**
- * ใครเรียกอะไร (ตามสถาปัตยกรรมในโจทย์หัวข้อ 2):
- *   Scheduler Thread : add(job) ทุกครั้งที่ Job พร้อม, แล้ว close() เมื่อส่ง Job ครบ
- *   Worker Threads   : take() วนจนได้ null
- *   Monitor Thread   : size() / isClosed()
+ * ReadyQueue: คิวงานที่รอ Worker หยิบไปทำ
  *
- * นโยบาย (หัวข้อ 4):
- *   FCFS     : Job ที่เข้า Ready Queue ก่อน (add ก่อน) ถูกหยิบก่อน
- *   PRIORITY : priority เลขน้อยสำคัญกว่า (1 = สูงสุด)
- *              เท่ากัน -> arrivalMs น้อยกว่าก่อน -> id น้อยกว่าก่อน
- *              (ตัดสินจากข้อมูลใน Job ล้วน ๆ ไม่ขึ้นกับว่า Thread ไหนมาถึงคิวก่อน)
+ * การออกแบบ: PriorityQueue + ReentrantLock + Condition + flag closed
+ *   - นโยบาย FCFS / PRIORITY ต่างกันแค่ Comparator
+ *   - Worker ที่ไม่มีงานจะ await() บน Condition (ถูกพัก ไม่ busy waiting)
+ *   - close() ใช้บอกว่า "จะไม่มีงานเข้าอีกแล้ว" -> take() คืน null เมื่อคิวว่างและปิดแล้ว
  *
- * ต้องการจาก Job: getId() (String), getArrivalMs() (long), getPriority() (int)
- * และฟิลด์เหล่านี้ต้อง final / ไม่ถูกแก้หลังสร้าง
+ * ทำไมไม่ใช้ PriorityBlockingQueue + poison pill:
+ *   poison pill ต้องถูกจัดลำดับตาม Comparator ด้วย อาจถูกหยิบก่อนงานจริง
+ *   การใช้ flag closed ตรงไปตรงมากว่า และงานที่ค้างอยู่จะถูกทำจนหมดก่อน Worker หยุด
+ *
+ * Tie-break: ตัดสินจากข้อมูลของ Job เท่านั้น (ไม่ขึ้นกับว่า Thread ใดเข้าคิวก่อน)
+ *   FCFS     : actualArrivalMs -> id
+ *   PRIORITY : priority (1 สูงสุด) -> actualArrivalMs -> id
+ *
+ * ต้องเซ็ต job.actualArrivalMs ก่อนเรียก add()
  */
 public class ReadyQueue {
 
     private final Config.Policy policy;
-    private final Queue<Job> queue;                 // เข้าถึงได้เฉพาะตอนถือ lock
-    private final ReentrantLock lock = new ReentrantLock();
-    private final Condition notEmpty = lock.newCondition();   // ห้องรอของ Worker
-    private boolean closed = false;                 // อ่าน/เขียนใต้ lock เท่านั้น
-
+    private final PriorityQueue<Job> queue; //เก็บงาน เรียงตาม Comparator
+    private final ReentrantLock lock = new ReentrantLock(); //กุญแจ ให้เข้าคิวได้ทีละ Thread
+    private final Condition notEmpty = lock.newCondition(); //จุดรอของ Worker ที่คิวว่าง เอาไว้ปลุก Worker
+    private boolean closed = false;   // อ่าน/เขียนภายใต้ lock เท่านั้น
+    // 1. รับมาว่าทำงานแบบไหนเก็บไว้ที่ตัวแปรระดับคลาส
     public ReadyQueue(Config.Policy policy) {
-        this.policy = Objects.requireNonNull(policy, "policy must not be null");
-        switch (policy) {
-            case FCFS:
-                this.queue = new ArrayDeque<>();
-                break;
-            case PRIORITY:
-                this.queue = new PriorityQueue<>(priorityOrder());
-                break;
-            default:
-                throw new IllegalArgumentException("Unsupported policy: " + policy);
+        this.policy = policy;
+        this.queue = new PriorityQueue<>(11, comparatorFor(policy));
+    }
+    // 2. เมื่อเลือกแบบการทำงาน -> จัดการตามแบบนั้น
+    private static Comparator<Job> comparatorFor(Config.Policy policy) {
+        Comparator<Job> byArrival = Comparator
+                .comparingLong((Job j) -> j.actualArrivalMs)
+                .thenComparing(j -> j.id);
+        if (policy == Config.Policy.FCFS) {
+            return byArrival;
         }
-    }
-
-    /** priority (น้อยก่อน) -> arrivalMs (น้อยก่อน) -> id (น้อยก่อน) */
-    private static Comparator<Job> priorityOrder() {
         return Comparator
-                .comparingInt(Job::getPriority)
-                .thenComparingLong(Job::getArrivalMs)
-                .thenComparing(Job::getId);
+                .comparingInt((Job j) -> j.priority)
+                .thenComparing(byArrival);
     }
-
-    /** Scheduler เรียก: ใส่ Job ที่พร้อมทำเข้าคิว */
+    /* 3. เพิ่มงานเข้าคิว เรียกโดย Scheduler จัดคิวงานให้
+          หลังจากนั้นเรียก worker มาทำงาน โดยใช้ notEmpty.signal(); ส่งสัญญาณบอก
+    
+    */
     public void add(Job job) {
-        Objects.requireNonNull(job, "job must not be null");
-        lock.lock();
+        lock.lock(); //ล็อกการทำงาน
         try {
             if (closed) {
-                throw new IllegalStateException("ReadyQueue is closed");
+                throw new IllegalStateException(">> ReadyQueue ถูกปิดแล้ว ไม่รับงานเพิ่ม");
             }
-            queue.add(job);
-            notEmpty.signal();      // งานเพิ่ม 1 ชิ้น ปลุก Worker 1 ตัว
-        } finally {
+            queue.offer(job);
+            notEmpty.signal();   // งานเข้า 1 ชิ้น ปลุก Worker 1 ตัวพอ
+        } 
+        finally {
             lock.unlock();
         }
     }
-
+ 
     /**
-     * Worker เรียก: หยิบ Job ถัดไปตามนโยบาย
-     * ถ้ายังไม่มีงานจะหลับรอ (ไม่ busy-wait)
-     *
-     * @return Job หรือ null เมื่อคิวว่างและถูก close() แล้ว = Worker ควรจบการทำงาน
-     * @throws InterruptedException ถ้าถูก interrupt ระหว่างรอ
+     * หยิบงานถัดไปตามนโยบาย เรียกโดย Worker Thread
+     *  - คิวว่างและยังไม่ปิด : พัก Thread (ไม่กิน CPU) จนกว่าจะมีงานหรือถูกปิด
+     *  - คิวว่างและปิดแล้ว  : คืน null = สัญญาณให้ Worker จบการทำงาน
+     *  - ถูก interrupt      : โยน InterruptedException
      */
     public Job take() throws InterruptedException {
         lock.lockInterruptibly();
@@ -133,30 +97,30 @@ public class ReadyQueue {
                 if (closed) {
                     return null;
                 }
-                notEmpty.await();
+                notEmpty.await();   // ปล่อยล็อกและพักจนถูก signal
             }
-            return queue.poll();
+            return queue.poll(); //หยิบงานออกจากคิวแล้วลบ
         } finally {
             lock.unlock();
         }
     }
-
+ 
     /**
-     * Scheduler เรียกหลังส่ง Job ครบแล้ว: "จะไม่มีงานใหม่อีก"
-     * Job ที่ค้างในคิวยังถูกหยิบจนหมดตามปกติ แล้ว Worker ถึงจะได้ null
-     * เรียกซ้ำได้ และทำงานถูกต้องไม่ว่ามี Worker กี่ตัว (รวมที่เพิ่มทีหลัง)
+     * ประกาศว่าไม่มีงานเข้าอีกแล้ว (เรียกโดย JobGenerator หลังสร้างงานครบ)
+     * ปลุก Worker ทุกตัวที่รออยู่เพื่อให้เห็นว่าคิวปิดและจบการทำงาน
+     * งานที่ยังค้างในคิวจะถูกหยิบทำจนหมดก่อน
      */
     public void close() {
         lock.lock();
         try {
             closed = true;
-            notEmpty.signalAll();
+            notEmpty.signalAll(); //ปลุก worker ทุกตัวให้ตื่น
         } finally {
             lock.unlock();
         }
     }
-
-    /** Monitor เรียก: จำนวน Job ที่รออยู่ (snapshot ณ ขณะอ่าน) */
+ 
+    /** จำนวนงานที่รออยู่ตอนนี้ ใช้โดย Monitor */
     public int size() {
         lock.lock();
         try {
@@ -165,17 +129,48 @@ public class ReadyQueue {
             lock.unlock();
         }
     }
-
-    public boolean isClosed() {
+ 
+    public Config.Policy getPolicy() {
+        return policy;
+    }
+ 
+    /** สำเนาสำหรับ log/Monitor เรียงตามนโยบาย */
+    public List<Job> snapshot() {
         lock.lock();
         try {
-            return closed;
+            List<Job> copy = new ArrayList<>(queue);
+            copy.sort(queue.comparator());
+            return copy;
         } finally {
             lock.unlock();
         }
     }
-
-    public Config.Policy getPolicy() {
-        return policy;
-    }
 }
+
+
+
+
+/*
+========================================= อธิบายเพิ่มเติม =========================================
+[Condition Class] มี 3 method หลัก
+    await()	พัก Thread นี้ และ ปล่อยล็อกให้อัตโนมัติ รอจนกว่าจะถูกปลุก
+    signal()	ปลุก Thread ที่รออยู่ 1 ตัว
+    signalAll()	ปลุก Thread ที่รออยู่ ทุกตัว
+//--------------------------------------------------------------------------------//
+[ReentrantLock ] 
+    กุญแจ (lock) ให้ทีละ Thread เท่านั้นเข้าไปทำงานในส่วนที่ล็อกไว้ได้
+    lock.lock();
+    try {
+        // ส่วนที่ต้องการให้ทีละ Thread เข้า
+    } finally {
+        lock.unlock();   // ต้องคืนเสมอ แม้เกิด exception
+    }
+    -> ต่างจาก synchronized ตรงที่ ต้องคืนกุญแจเองเสมอ
+   method สำคัญ
+    lock()	ขอกุญแจ ถ้าไม่ได้จะรอไปเรื่อยๆ	ใช้ทั่วไป
+    unlock()	คืนกุญแจ	ต้องเรียกใน finally เสมอ
+    lockInterruptibly()	ขอกุญแจ แต่ถ้าถูก interrupt() ระหว่างรอจะเลิกรอและโยน InterruptedException	Thread ที่ต้องหยุดได้ เช่น take() ของ Worker
+    tryLock()	ลองขอกุญแจ ถ้าไม่ได้คืน false ทันที ไม่รอ	อยากหลีกเลี่ยงการรอ/deadlock
+    tryLock(time, unit)	รอกุญแจแค่ช่วงเวลาที่กำหนด	รอได้แต่ไม่นาน
+    newCondition()	สร้างจุดรอ (Condition) ผูกกับล็อกนี้	เมื่อต้องรอเงื่อนไข เช่น "คิวไม่ว่าง"
+*/
