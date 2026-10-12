@@ -16,25 +16,35 @@
  *   - ถ้า Thread ถูก interrupt หลัง acquire สำเร็จแต่ก่อน release
  *     โค้ดของกลุ่มยังคืน permit ได้หรือไม่
  */
+
+import java.util.EnumMap;
+import java.util.Map;
+import java.util.concurrent.Semaphore;
+
 public class ResourceManager {
 
     // TODO: เก็บ Semaphore ของ PRINTER และ DATABASE
+    private final Map<ResourceType, Semaphore> semaphores = new EnumMap<>(ResourceType.class);
+    private final Map<ResourceType, Integer> totals = new EnumMap<>(ResourceType.class);
 
     public ResourceManager(int printerPermits, int databasePermits) {
         // TODO
-        throw new UnsupportedOperationException("TODO: ResourceManager constructor");
+        semaphores.put(ResourceType.PRINTER, new Semaphore(printerPermits, true));
+        semaphores.put(ResourceType.DATABASE, new Semaphore(databasePermits, true));
+        totals.put(ResourceType.PRINTER, printerPermits);
+        totals.put(ResourceType.DATABASE, databasePermits);
     }
 
     /** ขอสิทธิ์ใช้ทรัพยากร จะรอจนกว่าจะได้ */
     public void acquire(ResourceType type) throws InterruptedException {
         // TODO
-        throw new UnsupportedOperationException("TODO: ResourceManager.acquire");
+        semaphores.get(type).acquire();
     }
 
     /** คืนสิทธิ์ใช้ทรัพยากร */
     public void release(ResourceType type) {
         // TODO
-        throw new UnsupportedOperationException("TODO: ResourceManager.release");
+        semaphores.get(type).release();
     }
 
     /**
@@ -43,6 +53,11 @@ public class ResourceManager {
      */
     public String status() {
         // TODO
-        throw new UnsupportedOperationException("TODO: ResourceManager.status");
+        return "printer=" + available(ResourceType.PRINTER) + "/" + totals.get(ResourceType.PRINTER)
+             + " database=" + available(ResourceType.DATABASE) + "/" + totals.get(ResourceType.DATABASE);
+    }
+
+    private int available(ResourceType type) {
+        return semaphores.get(type).availablePermits();
     }
 }
