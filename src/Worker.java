@@ -17,25 +17,63 @@
  *     permit จะค้างถาวรและระบบจะแขวน ต้องออกแบบให้คืนได้เสมอ
  *   - Worker ต้องหยุดเองได้เมื่อไม่มีงานเหลือแล้ว ไม่ใช่วนรอตลอดไป
  */
+
 public class Worker extends Thread {
 
-    // TODO: เก็บ ReadyQueue, ResourceManager, Statistics และ logger
+    private final ReadyQueue readyQueue;
+    private final ResourceManager resources;
+    private final Statistics statistics;
+    private final ProjectLogger logger;
 
     public Worker(String name, ReadyQueue readyQueue, ResourceManager resources,
                   Statistics statistics, ProjectLogger logger) {
         super(name);
-        // TODO
-        throw new UnsupportedOperationException("TODO: Worker constructor");
+        this.readyQueue = readyQueue;
+        this.resources = resources;
+        this.statistics = statistics;
+        this.logger = logger;
     }
 
     @Override
     public void run() {
-        // TODO: วนรับงานและเรียก processJob จนกว่าจะได้รับสัญญาณให้หยุด
+        try {
+            while (true) {
+                Job job = readyQueue.take();
+                if (job == Job.POISON) {
+                    break; // ไม่มีงานเหลือแล้ว
+                }
+                processJob(job);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
-    /** ทำงานหนึ่งชิ้นให้จบตามลำดับ 5 ขั้นด้านบน */
+    /** ทำงานหนึ่งชิ้นให้จบตามลำดับ 5 ขั้น */
     private void processJob(Job job) throws InterruptedException {
-        // TODO
-        throw new UnsupportedOperationException("TODO: Worker.processJob");
+        // ขั้น 1: บันทึกเวลาเริ่ม
+        job.startTimeMs = logger.now(); // ถ้าเป็น instance method ให้ใช้ logger.now()
+
+        // ขั้น 2: งานหลัก
+        Thread.sleep(job.workMs);
+
+        if (job.resource != ResourceType.NONE) {
+            // ขั้น 3: เริ่มรอ แล้ว acquire
+            job.resourceWaitStartMs = logger.now();
+            resources.acquire(job.resource);
+            job.resourceWaitMs = logger.now() - job.resourceWaitStartMs;
+
+            try {
+                // ขั้น 4: ถือครอง resource
+                Thread.sleep(job.resourceMs);
+            } finally {
+                // ขั้น 5: คืนเสมอ แม้ถูก interrupt หรือเกิด exception
+                resources.release(job.resource);
+            }
+        }
+
+        // ขั้น 5: บันทึกเวลาจบ แล้วส่งให้ Statistics
+        job.completionTimeMs = logger.now();
+        statistics.recordCompletion(job);
     }
 }
