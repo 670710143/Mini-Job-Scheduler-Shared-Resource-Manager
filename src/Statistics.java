@@ -1,5 +1,3 @@
-import java.util.List;
-
 /**
  * รวบรวมและคำนวณค่าที่ใช้วัดผลของการรันหนึ่งครั้ง
  *
@@ -15,11 +13,22 @@ import java.util.List;
  * ข้อควรระวัง: ค่าเฉลี่ยของ Resource Wait ให้คิดเฉพาะงานที่ใช้ resource
  * ส่วนงานที่ resource = NONE ให้ถือว่า Resource Wait เป็น 0
  */
+
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class Statistics {
 
     // TODO: เก็บข้อมูลของงานที่เสร็จแล้ว หรือเก็บผลรวมไว้คำนวณทีหลัง
-
+    private final AtomicInteger running = new AtomicInteger();
+    private final AtomicInteger completed = new AtomicInteger();
+    
     /** บันทึกว่างานชิ้นหนึ่งเสร็จแล้ว เรียกโดย Worker หลายตัวพร้อมกันได้ */
+
+    public void jobStarted()  { running.incrementAndGet(); }
+    public void jobFinished() { running.decrementAndGet(); }
+    public int runningCount() { return running.get(); }
+
     public void recordCompletion(Job job) {
         // TODO
         throw new UnsupportedOperationException("TODO: Statistics.recordCompletion");
