@@ -20,6 +20,7 @@
 import java.util.Objects;
 
 public class Monitor extends Thread {
+
     private final ReadyQueue readyQueue;
     private final ResourceManager resources;
     private final Statistics statistics;
