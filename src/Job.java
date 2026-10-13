@@ -10,11 +10,16 @@
 public class Job {
 
     public final String id;
+
     public final long arrivalMs; //เวลาที่งานเข้าสู่ระบบ นับตั้งแต่โปรแกรมเริ่ม
-    public final int priority;   // ลำดับความสำคัญ น้อย = priority สูง
-    public final long workMs;    // ระยะเวลาของงานหลักก่อนของ resource
-    public final ResourceType resource;  //resource รวมที่ต้องใช้ 
-    public final long resourceMs;        // ระยะเวลาครอง resource จะ = 0 เสมอเมื่อ resource เป็น NONE
+    public final int priority; // ลำดับความสำคัญ น้อย = priority สูง
+
+    public final long workMs; // ระยะเวลาของงานหลักก่อนของ resource
+
+    public final ResourceType resource; //resource รวมที่ต้องใช้ 
+
+
+    public final long resourceMs; // ระยะเวลาครอง resource จะ = 0 เสมอเมื่อ resource เป็น NONE
 
     /**
      * ลำดับที่งานนี้ปรากฏในไฟล์ workload เริ่มจาก 0
@@ -22,6 +27,7 @@ public class Job {
      * จะใช้หรือไม่ใช้ก็ได้ กติกาตัดสินลำดับเป็นสิ่งที่กลุ่มต้องออกแบบเอง
      */
     public final int sequence;
+
     public Job(String id, long arrivalMs, int priority, long workMs,
                ResourceType resource, long resourceMs, int sequence) {
         this.id = id;
@@ -36,12 +42,20 @@ public class Job {
     // =====================================================================
     // TODO (นักศึกษา): เพิ่มฟิลด์สำหรับเก็บค่าที่ใช้วัดผลของงานชิ้นนี้เอง
 
-   //volatile คือ keyword ที่ใช้กับ ตัวแปรเพื่อบอก JVM ว่าอาจถูกหลาย thread เข้าถึงและเปลี่ยนแปลงพร้อมกัน
-    public volatile long actualArrivalMs = -1;      //  เวลาที่เข้าสู่ระบบจริง
-    public volatile long startTimeMs = -1;         // เวลาที่เริ่มถูกทำโดย Worker
-    public volatile long resourceWaitStartMs = -1; // เวลาที่เริ่มรอคิวทรัพยากร/Semaphore 
-    public volatile long resourceWaitMs = 0;       // ระยะเวลารอคิวทรัพยากรรวม 
-    public volatile long completionTimeMs = -1;    // เวลาที่งานชิ้นนี้ทำเสร็จสมบูรณ์ 
+    public static final Job POISON = new Job("POISON", 0, Integer.MAX_VALUE, 0,
+        ResourceType.NONE, 0, Integer.MAX_VALUE);
+
+    //  เวลาที่เข้าสู่ระบบจริง
+    public volatile long actualArrivalMs = -1;
+    // เวลาที่เริ่มถูกทำโดย Worker
+    public volatile long startTimeMs = -1;
+    // เวลาที่เริ่มรอคิวทรัพยากร/Semaphore 
+    public volatile long resourceWaitStartMs = -1;
+    // ระยะเวลารอคิวทรัพยากรรวม 
+    public volatile long resourceWaitMs = 0;
+    // เวลาที่งานชิ้นนี้ทำเสร็จสมบูรณ์ 
+    public volatile long completionTimeMs = -1;
+
     public long waitingTime(){
         if(startTimeMs >=0 && actualArrivalMs >=0) 
             return startTimeMs - actualArrivalMs;
