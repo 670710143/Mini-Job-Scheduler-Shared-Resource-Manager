@@ -1,3 +1,4 @@
+
 /**
  * รับงานจาก JobGenerator แล้วจัดเข้า Ready Queue
  *
@@ -18,8 +19,10 @@
 เมื่อ Scheduler จบ (ไม่ว่าด้วยเหตุใด) จะเรียก readyQueue.close() ใน finally  
 ---> เพื่อให้ Worker ที่หลับอยู่ตื่นมาเห็นว่าไม่มีงานเข้าอีกแล้ว
  */
+
 import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
+
 public class Scheduler extends Thread {
 
     // TODO: เก็บช่องทางรับงานจาก JobGenerator, ReadyQueue ปลายทาง และ logger
@@ -27,11 +30,12 @@ public class Scheduler extends Thread {
     // หมายเหตุ: constructor ด้านล่างยังไม่มี parameter สำหรับ "ช่องทางรับงาน"
     // ให้เพิ่มเข้าไปให้ตรงกับที่ออกแบบไว้ใน JobGenerator
     // เพิ่ม parameter ได้ แต่อย่าเปลี่ยนชื่อคลาส
-    public static final Job END = new Job("END", 0 ,Integer.MAX_VALUE,0,ResourceType.NONE,0,-1);
-   private final BlockingQueue<Job> inbox;
-   private final ReadyQueue readyQueue;
-   private final ProjectLogger logger;
-    public Scheduler(BlockingQueue<Job> inbox,ReadyQueue readyQueue, ProjectLogger logger) {
+    public static final Job END = new Job("END", 0, Integer.MAX_VALUE, 0, ResourceType.NONE, 0, -1);
+    private final BlockingQueue<Job> inbox;
+    private final ReadyQueue readyQueue;
+    private final ProjectLogger logger;
+
+    public Scheduler(BlockingQueue<Job> inbox, ReadyQueue readyQueue, ProjectLogger logger) {
         super("scheduler");
         this.inbox = Objects.requireNonNull(inbox);
         this.readyQueue = Objects.requireNonNull(readyQueue);
@@ -40,26 +44,24 @@ public class Scheduler extends Thread {
 
     @Override
     public void run() {
-        try{
-            while(true){
+        try {
+            while (true) {
                 Job job = inbox.take(); //หยิบงานถัดไปจาก inbox
-                if(job == END){
+                if (job == JobGenerator.POISON) {
                     break;
                 }
                 readyQueue.add(job);
                 log("[Scheduler] " + job.id + " added to -> ReadyQueue (size=" + readyQueue.size() + ")");
             }
-        }
-        catch (InterruptedException e) {
+        } catch (InterruptedException e) {
             Thread.currentThread().interrupt();   // คืนสถานะ interrupt แล้วออกจากลูป
-        }
-        finally{
+        } finally {
             readyQueue.close(); // ต้องเรียกเสมอ ไม่งั้น Worker ค้างรอ
             log("[Scheduler] : Closed ReadyQueue ");
         }
     }
-    
-   private void log(String message) {
+
+    private void log(String message) {
         logger.systemEvent(message);
     }
 }
