@@ -16,23 +16,36 @@
  * ข้อควรคิด: ตัวนับ running ควรอยู่ที่ไหน ใครเป็นคนเพิ่มและลด
  * และจะอ่านพร้อมกับ ready กับ completed ให้เป็นภาพเดียวกันได้อย่างไร
  */
-public class Monitor extends Thread {
 
-    // TODO: เก็บสิ่งที่ต้องอ่านสถานะ และ logger
-    //
-    // หมายเหตุ: constructor ด้านล่างยังไม่มีทางเข้าถึงตัวนับ running
-    // เพราะยังไม่มีการตัดสินว่าตัวนับนั้นควรอยู่ที่ไหน ให้เพิ่ม parameter
-    // เข้าไปเองเมื่อออกแบบเสร็จ
+import java.util.Objects;
+
+public class Monitor extends Thread {
+    private final ReadyQueue readyQueue;
+    private final ResourceManager resources;
+    private final Statistics statistics;
+    private final ProjectLogger logger;
 
     public Monitor(ReadyQueue readyQueue, ResourceManager resources,
                    Statistics statistics, ProjectLogger logger) {
         super("monitor");
-        // TODO
-        throw new UnsupportedOperationException("TODO: Monitor constructor");
+        this.readyQueue = Objects.requireNonNull(readyQueue);
+        this.resources = Objects.requireNonNull(resources);
+        this.statistics = Objects.requireNonNull(statistics);
+        this.logger = Objects.requireNonNull(logger);
     }
 
     @Override
     public void run() {
-        // TODO: วนรายงานสถานะทุก ~1000 ms จนกว่าจะได้รับสัญญาณให้หยุด
+        try {
+            while (!isInterrupted()) {
+                logger.monitor(readyQueue.size(),
+                               statistics.runningCount(),
+                               statistics.completedCount(),
+                               resources.status());
+                Thread.sleep(1000);
+            }
+        } catch (InterruptedException e) {
+            // ได้รับสัญญาณหยุด จบ thread ตามปกติ
+        }
     }
 }
