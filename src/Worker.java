@@ -1,3 +1,4 @@
+
 /**
  * Thread ที่ดึงงานจาก Ready Queue ไปทำจนเสร็จ
  *
@@ -26,7 +27,7 @@ public class Worker extends Thread {
     private final ProjectLogger logger;
 
     public Worker(String name, ReadyQueue readyQueue, ResourceManager resources,
-                  Statistics statistics, ProjectLogger logger) {
+            Statistics statistics, ProjectLogger logger) {
         super(name);
         this.readyQueue = readyQueue;
         this.resources = resources;
@@ -37,22 +38,26 @@ public class Worker extends Thread {
     @Override
     public void run() {
         try {
-            while (true) {
-                Job job = readyQueue.take();
-                if (job == Job.POISON) {
-                    break; // ไม่มีงานเหลือแล้ว
+            Job job;
+            while ((job = readyQueue.take()) != null) {   // null = คิวว่างและปิดแล้ว
+                statistics.jobStarted();
+                try {
+                    processJob(job);   // recordCompletion อยู่ท้าย processJob
+                } finally {
+                    statistics.jobFinished();
                 }
-                processJob(job);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
     }
 
-    /** ทำงานหนึ่งชิ้นให้จบตามลำดับ 5 ขั้น */
+    /**
+     * ทำงานหนึ่งชิ้นให้จบตามลำดับ 5 ขั้น
+     */
     private void processJob(Job job) throws InterruptedException {
         // ขั้น 1: บันทึกเวลาเริ่ม
-        job.startTimeMs = logger.now(); // ถ้าเป็น instance method ให้ใช้ logger.now()
+        job.startTimeMs = logger.now();
 
         // ขั้น 2: งานหลัก
         Thread.sleep(job.workMs);
