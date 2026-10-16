@@ -114,7 +114,7 @@ public class ReadyQueue {
         lock.lock();
         try {
             closed = true;
-            notEmpty.signalAll(); //ปลุก worker ทุกตัวให้ตื่น
+            notEmpty.signalAll();
         } finally {
             lock.unlock();
         }
@@ -151,7 +151,7 @@ public class ReadyQueue {
 
 
 /*
-========================================= อธิบายเพิ่มเติม =========================================
+==============================================================================
 [Condition Class] มี 3 method หลัก
     await()	พัก Thread นี้ และ ปล่อยล็อกให้อัตโนมัติ รอจนกว่าจะถูกปลุก
     signal()	ปลุก Thread ที่รออยู่ 1 ตัว
