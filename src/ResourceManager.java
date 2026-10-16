@@ -23,12 +23,10 @@ import java.util.concurrent.Semaphore;
 
 public class ResourceManager {
 
-    // TODO: เก็บ Semaphore ของ PRINTER และ DATABASE
     private final Map<ResourceType, Semaphore> semaphores = new EnumMap<>(ResourceType.class);
     private final Map<ResourceType, Integer> totals = new EnumMap<>(ResourceType.class);
 
     public ResourceManager(int printerPermits, int databasePermits) {
-        // TODO
         semaphores.put(ResourceType.PRINTER, new Semaphore(printerPermits, true));
         semaphores.put(ResourceType.DATABASE, new Semaphore(databasePermits, true));
         totals.put(ResourceType.PRINTER, printerPermits);
@@ -37,13 +35,11 @@ public class ResourceManager {
 
     /** ขอสิทธิ์ใช้ทรัพยากร จะรอจนกว่าจะได้ */
     public void acquire(ResourceType type) throws InterruptedException {
-        // TODO
         semaphores.get(type).acquire();
     }
 
     /** คืนสิทธิ์ใช้ทรัพยากร */
     public void release(ResourceType type) {
-        // TODO
         semaphores.get(type).release();
     }
 
@@ -52,7 +48,6 @@ public class ResourceManager {
      * เช่น "printer=1/1 database=0/2"
      */
     public String status() {
-        // TODO
         return "printer=" + available(ResourceType.PRINTER) + "/" + totals.get(ResourceType.PRINTER)
              + " database=" + available(ResourceType.DATABASE) + "/" + totals.get(ResourceType.DATABASE);
     }
