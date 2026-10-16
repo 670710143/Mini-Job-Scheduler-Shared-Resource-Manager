@@ -40,11 +40,11 @@ public class Worker extends Thread {
         try {
             Job job;
             while ((job = readyQueue.take()) != null) {   // null = คิวว่างและปิดแล้ว
-                statistics.jobStarted();
+                statistics.jobStarted(job);
                 try {
                     processJob(job);   // recordCompletion อยู่ท้าย processJob
                 } finally {
-                    statistics.jobFinished();
+                    statistics.jobFinished(job);// ทำเสมอ แม้ exception หรือถูก interrupt
                 }
             }
         } catch (InterruptedException e) {
@@ -58,7 +58,7 @@ public class Worker extends Thread {
     private void processJob(Job job) throws InterruptedException {
         // ขั้น 1: บันทึกเวลาเริ่ม
         job.startTimeMs = logger.now();
-
+        logger.jobStarted(job);
         // ขั้น 2: งานหลัก
         Thread.sleep(job.workMs);
 
