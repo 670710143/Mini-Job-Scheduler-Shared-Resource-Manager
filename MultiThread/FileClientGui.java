@@ -20,8 +20,8 @@ import java.util.concurrent.atomic.*;
 /**
  * MultiThread File Downloader - Modern UX/UI Edition + Download History
  *
- * History table format (one row per Start Download click):
- *   Run | Started | File | Mode | workers | time per round (s) | average (s) | MB/s | size/hash
+ * History table format (per file / mode / workers case):
+ *   Mode | workers | time per round (s) | average (s) | MB/s | size/hash
  */
 public class FileClientGui extends JFrame {
 
@@ -47,9 +47,6 @@ public class FileClientGui extends JFrame {
 
     static final int BUF = 64 * 1024;
     static final int NIO_CHUNK = 1 << 20;
-
-    static final java.time.format.DateTimeFormatter TS_FMT =
-            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     enum State { IDLE, RUNNING, VERIFYING, DONE, FAILED, CANCELLED }
 
@@ -81,20 +78,17 @@ public class FileClientGui extends JFrame {
     final JTable fileTable = new EmptyHintTable(tableModel, "Connect to a server to list available files");
 
     // ---------- History table ----------
-    static final String[] HISTORY_COLS = {"Run", "Started", "File", "Mode", "Workers",
-            "Time per round (s)", "Average (s)", "MB/s", "Size/Hash"};
+    static final String[] HISTORY_COLS = {"Run", "File", "Mode", "Workers", "Time per round (s)", "Average (s)", "MB/s", "Size/Hash"};
     final DefaultTableModel historyModel = new DefaultTableModel(HISTORY_COLS, 0) {
         @Override public boolean isCellEditable(int r, int c) { return false; }
     };
     final JTable historyTable = new EmptyHintTable(historyModel, "No runs yet - completed downloads will appear here");
     final Map<Integer, Case> cases = new LinkedHashMap<>();   // key = run id, touched on EDT only
-    final Map<Integer, String> jobStartTimes = new HashMap<>(); // run id -> start timestamp, EDT only
     int jobSeq = 0;                                           // increments on every Start Download
 
-    /** One run = one Start Download click; holds every round's time. */
+    /** One benchmark case = file + mode + workers; holds every round's time. */
     static class Case {
         int run;
-        String startedAt = "";
         String file, mode;
         int workers;
         long size;
@@ -339,29 +333,29 @@ public class FileClientGui extends JFrame {
             @Override void customize(JTable t, Object v, int row, int col) {
                 String s = String.valueOf(v);
                 switch (col) {
-                    case 0, 1 -> {
+                    case 0 -> {
                         setHorizontalAlignment(SwingConstants.CENTER);
                         setForeground(TEXT_MUTED);
                     }
-                    case 3 -> {
+                    case 2 -> {
                         setHorizontalAlignment(SwingConstants.CENTER);
                         setFont(BOLD_FONT);
                         setForeground("NIO".equals(s) ? NIO_PURPLE : PRIMARY_BLUE);
                     }
-                    case 4 -> setHorizontalAlignment(SwingConstants.CENTER);
-                    case 6 -> setHorizontalAlignment(SwingConstants.RIGHT);
-                    case 7 -> { setHorizontalAlignment(SwingConstants.RIGHT); setFont(BOLD_FONT); }
-                    case 8 -> {
+                    case 3 -> setHorizontalAlignment(SwingConstants.CENTER);
+                    case 5 -> setHorizontalAlignment(SwingConstants.RIGHT);
+                    case 6 -> { setHorizontalAlignment(SwingConstants.RIGHT); setFont(BOLD_FONT); }
+                    case 7 -> {
                         setHorizontalAlignment(SwingConstants.CENTER);
                         setFont(BOLD_FONT);
-                        setForeground(s.equals("OK/OK") ? SUCCESS_GREEN
-                                : s.startsWith("OK") && s.endsWith("N/A") ? TEXT_MUTED : DANGER_RED);
+                        setForeground(s.equals("OK/OK") ? SUCCESS_GREEN : s.endsWith("N/A") && s.startsWith("OK")
+                                ? TEXT_MUTED : DANGER_RED);
                     }
                     default -> setHorizontalAlignment(SwingConstants.LEFT);
                 }
             }
         });
-        int[] w = {45, 140, 170, 60, 70, 230, 90, 80, 100};
+        int[] w = {45, 190, 60, 70, 250, 90, 80, 100};
         for (int i = 0; i < w.length; i++) historyTable.getColumnModel().getColumn(i).setPreferredWidth(w[i]);
     }
 
@@ -627,7 +621,6 @@ public class FileClientGui extends JFrame {
 
         final int fr = rounds;
         final int job = ++jobSeq;
-        jobStartTimes.put(job, java.time.LocalDateTime.now().format(TS_FMT));
         Thread.ofVirtual().start(() -> runDownload(h, basePort, fileName, useNio, workers, dir, fr, job));
     }
 
@@ -951,7 +944,6 @@ public class FileClientGui extends JFrame {
         Case c = cases.computeIfAbsent(run, k -> {
             Case n = new Case();
             n.run = run;
-            n.startedAt = jobStartTimes.getOrDefault(run, java.time.LocalDateTime.now().format(TS_FMT));
             n.file = file; n.mode = mode; n.workers = workers; n.size = size;
             return n;
         });
@@ -967,7 +959,7 @@ public class FileClientGui extends JFrame {
         historyModel.setRowCount(0);
         for (Case c : cases.values()) {
             historyModel.addRow(new Object[]{
-                    c.run, c.startedAt, c.file, c.mode, c.workers, c.timesText(),
+                    c.run, c.file, c.mode, c.workers, c.timesText(),
                     String.format("%.2f", c.avg()), String.format("%.2f", c.mbps()), c.sizeHash()});
         }
         if (historyModel.getRowCount() > 0) {
@@ -982,7 +974,6 @@ public class FileClientGui extends JFrame {
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (r != JOptionPane.OK_OPTION) return;
         cases.clear();
-        jobStartTimes.clear();
         refreshHistory();
         statusLeft.setText("History cleared");
     }
@@ -997,11 +988,11 @@ public class FileClientGui extends JFrame {
             int per = list.stream().mapToInt(c -> c.times.size()).max().orElse(0);
             double mb = list.get(0).size / 1048576.0;
             sb.append(String.format("========== Summary (%s, %.2f MB, %d per case) ==========%n", e.getKey(), mb, per));
-            sb.append(String.format("%-3s | %-19s | %-5s | %-7s | %-28s | %-11s | %-8s | %s%n",
-                    "Run", "Started", "Mode", "workers", "time per round (s)", "average (s)", "MB/s", "size/hash"));
+            sb.append(String.format("%-3s | %-5s | %-7s | %-28s | %-11s | %-8s | %s%n",
+                    "Run", "Mode", "workers", "time per round (s)", "average (s)", "MB/s", "size/hash"));
             for (Case c : list) {
-                sb.append(String.format("%-3d | %-19s | %-5s | %-7d | %-28s | %-11.2f | %-8.2f | %s%n",
-                        c.run, c.startedAt, c.mode, c.workers, c.timesText(), c.avg(), c.mbps(), c.sizeHash()));
+                sb.append(String.format("%-3d | %-5s | %-7d | %-28s | %-11.2f | %-8.2f | %s%n",
+                        c.run, c.mode, c.workers, c.timesText(), c.avg(), c.mbps(), c.sizeHash()));
             }
             sb.append(System.lineSeparator());
         }
@@ -1020,11 +1011,11 @@ public class FileClientGui extends JFrame {
         fc.setSelectedFile(new File("download-history.csv"));
         if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
         try (PrintWriter w = new PrintWriter(fc.getSelectedFile(), StandardCharsets.UTF_8)) {
-            w.println("run,started_at,file,size_bytes,mode,workers,rounds,time_per_round_s,average_s,mb_per_s,size_hash");
+            w.println("run,file,size_bytes,mode,workers,rounds,time_per_round_s,average_s,mb_per_s,size_hash");
             for (Case c : cases.values()) {
-                w.printf("%d,%s,\"%s\",%d,%s,%d,%d,\"%s\",%.4f,%.4f,%s%n",
-                        c.run, c.startedAt, c.file.replace("\"", "\"\""), c.size, c.mode, c.workers,
-                        c.times.size(), c.timesText(), c.avg(), c.mbps(), c.sizeHash());
+                w.printf("%d,\"%s\",%d,%s,%d,%d,\"%s\",%.4f,%.4f,%s%n",
+                        c.run, c.file.replace("\"", "\"\""), c.size, c.mode, c.workers, c.times.size(),
+                        c.timesText(), c.avg(), c.mbps(), c.sizeHash());
             }
             statusLeft.setText("History exported to " + fc.getSelectedFile().getName());
         } catch (IOException ex) {
