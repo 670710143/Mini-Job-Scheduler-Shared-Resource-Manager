@@ -1,0 +1,89 @@
+# Multi-threaded File Download Client/Server (Traditional I/O vs NIO)
+
+ต้องใช้ JDK 21 ขึ้นไป (ใช้ Virtual Thread)
+
+## Compile
+
+```
+javac FileServer.java FileClient.java
+```
+
+## Run
+
+เตรียมโฟลเดอร์ `share` ที่มีไฟล์ใหญ่ (ชื่อไฟล์ห้ามมีช่องว่าง) แล้วเปิด Server:
+
+```
+java FileServer 9000 share
+```
+
+Server เปิด 2 พอร์ตพร้อมกัน เพื่อเทียบกันโดยใช้ไฟล์และเครื่องเดียวกัน
+- `9000` = Traditional I/O (`ServerSocket`, `RandomAccessFile.read`, `OutputStream.write`)
+- `9001` = NIO (`ServerSocketChannel`, `FileChannel.transferTo`)
+
+Client (คนละ terminal):
+
+```
+java FileClient localhost 9000 list
+java FileClient localhost 9000 get big.bin io 10 3      # โหมด io, 10 workers, 3 รอบ
+java FileClient localhost 9000 get big.bin nio 1 3      # โหมด nio, 1 worker, 3 รอบ
+java FileClient localhost 9000 bench big.bin 3          # รันครบ io/nio x 1/10 workers x 3 รอบ + ตารางสรุป
+```
+
+พอร์ตที่ให้ใน Client คือพอร์ตฐาน (io ใช้พอร์ตนั้น, nio ใช้พอร์ต+1) ไฟล์ที่โหลดอยู่ใน `downloads/`
+ถ้า Windows แสดงภาษาไทยเพี้ยน ให้รัน `chcp 65001` ก่อน
+
+## Protocol (TCP, คำสั่งเป็นข้อความ 1 บรรทัด ลงท้าย `\n`)
+
+| Request | Response |
+|---|---|
+| `LIST` | `FILE <name> <size>` หลายบรรทัด แล้วปิดด้วย `END` |
+| `INFO <name>` | `SIZE <bytes>` หรือ `ERROR 404 File not found` |
+| `HASH <name>` | `HASH <sha256-hex>` (ใช้ตรวจความถูกต้องหลังโหลด) |
+| `GET <name> <offset> <length>` | `OK <length>\n` ตามด้วย payload `length` byte พอดี |
+| ผิดพลาด | `ERROR 400` (รูปแบบผิด/คำสั่งไม่รู้จัก), `ERROR 404` (ไม่พบไฟล์), `ERROR 416` (ช่วง byte ผิด) |
+| `QUIT` | ปิด connection |
+
+1 connection ส่งได้หลายคำสั่งต่อเนื่อง
+
+## การทำงาน
+
+1. Client ขอ `INFO` (ขนาด) และ `HASH` จาก Server
+2. Client คำนวณช่วง byte ให้ N workers (ค่าเริ่มต้น 10): `chunk = size / N` โดย worker สุดท้ายรับเศษ ช่วงไม่ซ้อนกัน
+3. แต่ละ worker (Virtual Thread) เปิด connection ของตนเอง ส่ง `GET` พร้อม offset/length และรับเฉพาะช่วงนั้น
+4. เขียนลง final file ตาม offset โดยแต่ละ worker เปิด `RandomAccessFile` (io) หรือ `FileChannel` (nio) ของตัวเอง
+   (ไฟล์ถูกจองขนาดไว้ก่อนด้วย `setLength`)
+5. โหลดครบแล้วตรวจขนาดไฟล์และ SHA-256 เทียบกับที่ Server รายงาน
+6. Server: 1 connection = 1 Virtual Thread (`newVirtualThreadPerTaskExecutor`)
+
+คำสั่ง `bench` วอร์มอัพ 1 รอบ (ไม่นับผล) ก่อน เพื่อให้ไฟล์อยู่ใน page cache เท่ากันทุกกรณี
+เวลาที่วัดคือ จองไฟล์ + โหลดทุกช่วง (ไม่รวมเวลาคำนวณ hash)
+
+## ตัวอย่างผลทดลอง (รันใน sandbox ของผู้เขียนโค้ด ไฟล์สุ่ม 190.73 MB, localhost — ให้รันซ้ำบนเครื่องตัวเองเพื่อใส่ในรายงาน)
+
+| โหมด | workers | เวลาแต่ละรอบ (s) | เฉลี่ย (s) | MB/s | size/hash |
+|---|---|---|---|---|---|
+| IO | 1 | 0.702 0.561 0.485 | 0.583 | 327.2 | OK |
+| IO | 10 | 0.516 0.489 0.565 | 0.523 | 364.6 | OK |
+| NIO | 1 | 0.883 0.695 0.680 | 0.753 | 253.3 | OK |
+| NIO | 10 | 0.576 0.766 0.639 | 0.660 | 289.0 | OK |
+
+## ประเด็นสำหรับอธิบายในรายงาน
+
+**ทำไม 10 workers ไม่เร็วขึ้น 10 เท่า**
+- loopback, page cache, disk และ CPU เป็นทรัพยากรร่วมกัน เพิ่ม connection ไม่ได้เพิ่มเพดาน
+- มี overhead ของการสร้าง connection, context switch และ worker ที่เสร็จก่อนต้องรอตัวที่ช้าสุด
+- ไฟล์ขนาดเล็ก overhead มีสัดส่วนมากขึ้น
+
+**ทำไม NIO ไม่ชนะทุกครั้ง**
+- `transferTo` (sendfile) ลดการ copy ระหว่าง kernel กับ user space ได้เฉพาะฝั่ง Server
+- ฝั่ง Client `transferFrom` จาก socket ไม่ใช่ zero-copy: JDK อ่านผ่าน buffer ชั่วคราวก่อนเขียนลงไฟล์
+- บน loopback ที่ข้อมูลอยู่ใน page cache แล้ว ส่วนต่างเล็กและแกว่งตามรอบ จึงอาจไม่ชนะ
+- มีรายละเอียดของ Virtual Thread: JDK ตั้ง socket เป็น non-blocking ภายในเมื่อใช้บน virtual thread ทำให้
+  `transferTo` คืน 0 เมื่อ send buffer เต็ม โค้ด `NioConn.sendRange` จึงเขียนก้อนเล็กด้วย `write()` แล้วเรียก
+  `transferTo` ต่อ (ในการทดสอบข้อมูลส่วนใหญ่ราว 96% ยังไปทาง sendfile)
+
+**ข้อจำกัดของการทดสอบผ่าน localhost**
+- Page Cache: รอบหลังๆ อ่านจาก RAM ไม่ใช่ดิสก์ ผลเร็วเกินจริงและทำให้ส่วนต่างของ I/O แต่ละวิธีเล็กลง
+- Loopback: ไม่ผ่าน NIC จริง ไม่มี latency/packet loss ของเครือข่ายจริง
+- Storage cache: cache ของดิสก์/SSD ควบคุมได้ยาก
+- Client กับ Server แย่ง CPU และ disk ของเครื่องเดียวกัน
