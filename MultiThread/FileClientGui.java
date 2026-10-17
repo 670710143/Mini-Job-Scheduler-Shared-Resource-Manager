@@ -20,8 +20,8 @@ import java.util.concurrent.atomic.*;
 /**
  * MultiThread File Downloader - Modern UX/UI Edition + Download History
  *
- * History table format (per file / mode / workers case):
- *   Mode | workers | time per round (s) | average (s) | MB/s | size/hash
+ * History table format (one row per Start Download click):
+ *   Run | Started | File | Mode | workers | time per round (s) | average (s) | MB/s | size/hash
  */
 public class FileClientGui extends JFrame {
 
@@ -47,6 +47,9 @@ public class FileClientGui extends JFrame {
 
     static final int BUF = 64 * 1024;
     static final int NIO_CHUNK = 1 << 20;
+
+    static final java.time.format.DateTimeFormatter TS_FMT =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     enum State { IDLE, RUNNING, VERIFYING, DONE, FAILED, CANCELLED }
 
@@ -78,17 +81,20 @@ public class FileClientGui extends JFrame {
     final JTable fileTable = new EmptyHintTable(tableModel, "Connect to a server to list available files");
 
     // ---------- History table ----------
-    static final String[] HISTORY_COLS = {"Run", "File", "Mode", "Workers", "Time per round (s)", "Average (s)", "MB/s", "Size/Hash"};
+    static final String[] HISTORY_COLS = {"Run", "Started", "File", "Mode", "Workers",
+            "Time per round (s)", "Average (s)", "MB/s", "Size/Hash"};
     final DefaultTableModel historyModel = new DefaultTableModel(HISTORY_COLS, 0) {
         @Override public boolean isCellEditable(int r, int c) { return false; }
     };
     final JTable historyTable = new EmptyHintTable(historyModel, "No runs yet - completed downloads will appear here");
     final Map<Integer, Case> cases = new LinkedHashMap<>();   // key = run id, touched on EDT only
+    final Map<Integer, String> jobStartTimes = new HashMap<>(); // run id -> start timestamp, EDT only
     int jobSeq = 0;                                           // increments on every Start Download
 
-    /** One benchmark case = file + mode + workers; holds every round's time. */
+    /** One run = one Start Download click; holds every round's time. */
     static class Case {
         int run;
+        String startedAt = "";
         String file, mode;
         int workers;
         long size;
@@ -162,7 +168,10 @@ public class FileClientGui extends JFrame {
         setProtocolMode(false);
         setState(State.IDLE);
         pack();
-        setMinimumSize(new Dimension(1100, 800));
+        Dimension cm = getContentPane().getMinimumSize();
+        Insets fi = getInsets();
+        setMinimumSize(new Dimension(Math.max(1100, cm.width + fi.left + fi.right),
+                Math.max(800, cm.height + fi.top + fi.bottom)));
         setLocationRelativeTo(null);
     }
 
@@ -170,17 +179,50 @@ public class FileClientGui extends JFrame {
     // Layout
     // =====================================================================
     private JComponent buildBody() {
-        JPanel body = new JPanel(new BorderLayout(0, 16));
+        JPanel body = new JPanel(new BorderLayout());
         body.setBackground(BG_MAIN);
         body.setBorder(new EmptyBorder(16, 16, 12, 16));
 
-        JPanel top = new JPanel(new GridLayout(1, 2, 16, 0));
+        JPanel top = new ScrollPanel(new GridLayout(1, 2, 16, 0));
         top.setOpaque(false);
         top.add(buildLeftControlPanel());
         top.add(buildRightTelemetryPanel());
 
-        body.add(top, BorderLayout.CENTER);
-        body.add(buildHistoryPanel(), BorderLayout.SOUTH);
+        // Draggable divider: pull it up to make the History panel taller.
+        // Each side keeps its minimum size (file list never below 3 rows).
+        // Connection + Telemetry sit in a scroll pane so the divider can be pulled far up:
+        // they shrink with the divider and get a scrollbar instead of overlapping.
+        JScrollPane topScroll = new JScrollPane(top, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        topScroll.setBorder(null);
+        topScroll.setOpaque(false);
+        topScroll.getViewport().setOpaque(false);
+        topScroll.getVerticalScrollBar().setUnitIncrement(16);
+        topScroll.setMinimumSize(new Dimension(100, 150));
+        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, topScroll, buildHistoryPanel());
+        split.setUI(new javax.swing.plaf.basic.BasicSplitPaneUI() {
+            @Override public javax.swing.plaf.basic.BasicSplitPaneDivider createDefaultDivider() {
+                return new javax.swing.plaf.basic.BasicSplitPaneDivider(this) {
+                    @Override public void paint(Graphics g0) {
+                        Graphics2D g = (Graphics2D) g0.create();
+                        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                        g.setColor(BG_MAIN);
+                        g.fillRect(0, 0, getWidth(), getHeight());
+                        g.setColor(TEXT_FAINT);
+                        int cx = getWidth() / 2, cy = getHeight() / 2;
+                        for (int i = -1; i <= 1; i++) g.fillOval(cx + i * 10 - 2, cy - 2, 4, 4);
+                        g.dispose();
+                    }
+                };
+            }
+        });
+        split.setBorder(null);
+        split.setOpaque(false);
+        split.setDividerSize(16);
+        split.setContinuousLayout(true);
+        split.setResizeWeight(0.6);
+        split.setToolTipText("Drag to resize the History panel");
+        body.add(split, BorderLayout.CENTER);
         return body;
     }
 
@@ -208,16 +250,14 @@ public class FileClientGui extends JFrame {
         panel.add(form, BorderLayout.NORTH);
 
         JScrollPane sp = new JScrollPane(fileTable);
+        int hdrH = Math.max(28, fileTable.getTableHeader().getPreferredSize().height);
+        sp.setPreferredSize(new Dimension(100, hdrH + 34 * 5 + 4));   // comfortable: 5 rows
+        sp.setMinimumSize(new Dimension(100, hdrH + 34 * 3 + 4));     // never less than 3 rows
         sp.setBorder(BorderFactory.createLineBorder(BORDER_COLOR, 1));
         sp.getViewport().setBackground(CARD_BG);
         panel.add(sp, BorderLayout.CENTER);
 
-        JPanel actionRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        actionRow.setOpaque(false);
-        actionRow.add(downloadBtn);
-        actionRow.add(infoBtn);
-        actionRow.add(cancelBtn);
-        actionRow.add(openFolderBtn);
+        JPanel actionRow = row(downloadBtn, infoBtn, cancelBtn, openFolderBtn);
         openFolderBtn.setVisible(false);
         panel.add(actionRow, BorderLayout.SOUTH);
         return panel;
@@ -251,9 +291,11 @@ public class FileClientGui extends JFrame {
 
         detailLabel.setFont(UI_FONT);
         detailLabel.setForeground(TEXT_MUTED);
+        detailLabel.setMinimumSize(new Dimension(0, detailLabel.getPreferredSize().height));
         topInfo.add(left(detailLabel));
         topInfo.add(Box.createVerticalStrut(2));
         resultLabel.setFont(BOLD_FONT);
+        resultLabel.setMinimumSize(new Dimension(0, resultLabel.getPreferredSize().height));
         topInfo.add(left(resultLabel));
         topInfo.add(Box.createVerticalStrut(10));
 
@@ -273,6 +315,8 @@ public class FileClientGui extends JFrame {
 
         JScrollPane sp = new JScrollPane(lanesPanel, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
                 ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        sp.setPreferredSize(new Dimension(100, 180));
+        sp.setMinimumSize(new Dimension(100, 90));
         sp.setBorder(BorderFactory.createLineBorder(BORDER_COLOR, 1));
         sp.getViewport().setBackground(CARD_BG);
         panel.add(sp, BorderLayout.CENTER);
@@ -297,6 +341,7 @@ public class FileClientGui extends JFrame {
 
         JScrollPane sp = new JScrollPane(historyTable);
         sp.setPreferredSize(new Dimension(100, 190));
+        sp.setMinimumSize(new Dimension(100, 100));
         sp.setBorder(BorderFactory.createLineBorder(BORDER_COLOR, 1));
         sp.getViewport().setBackground(CARD_BG);
         panel.add(sp, BorderLayout.CENTER);
@@ -311,7 +356,8 @@ public class FileClientGui extends JFrame {
         statusLeft.setForeground(Color.WHITE);
         statusRight.setFont(UI_FONT);
         statusRight.setForeground(TEXT_FAINT);
-        bar.add(statusLeft, BorderLayout.WEST);
+        statusLeft.setMinimumSize(new Dimension(0, 16));
+        bar.add(statusLeft, BorderLayout.CENTER);
         bar.add(statusRight, BorderLayout.EAST);
         return bar;
     }
@@ -333,29 +379,29 @@ public class FileClientGui extends JFrame {
             @Override void customize(JTable t, Object v, int row, int col) {
                 String s = String.valueOf(v);
                 switch (col) {
-                    case 0 -> {
+                    case 0, 1 -> {
                         setHorizontalAlignment(SwingConstants.CENTER);
                         setForeground(TEXT_MUTED);
                     }
-                    case 2 -> {
+                    case 3 -> {
                         setHorizontalAlignment(SwingConstants.CENTER);
                         setFont(BOLD_FONT);
                         setForeground("NIO".equals(s) ? NIO_PURPLE : PRIMARY_BLUE);
                     }
-                    case 3 -> setHorizontalAlignment(SwingConstants.CENTER);
-                    case 5 -> setHorizontalAlignment(SwingConstants.RIGHT);
-                    case 6 -> { setHorizontalAlignment(SwingConstants.RIGHT); setFont(BOLD_FONT); }
-                    case 7 -> {
+                    case 4 -> setHorizontalAlignment(SwingConstants.CENTER);
+                    case 6 -> setHorizontalAlignment(SwingConstants.RIGHT);
+                    case 7 -> { setHorizontalAlignment(SwingConstants.RIGHT); setFont(BOLD_FONT); }
+                    case 8 -> {
                         setHorizontalAlignment(SwingConstants.CENTER);
                         setFont(BOLD_FONT);
-                        setForeground(s.equals("OK/OK") ? SUCCESS_GREEN : s.endsWith("N/A") && s.startsWith("OK")
-                                ? TEXT_MUTED : DANGER_RED);
+                        setForeground(s.equals("OK/OK") ? SUCCESS_GREEN
+                                : s.startsWith("OK") && s.endsWith("N/A") ? TEXT_MUTED : DANGER_RED);
                     }
                     default -> setHorizontalAlignment(SwingConstants.LEFT);
                 }
             }
         });
-        int[] w = {45, 190, 60, 70, 250, 90, 80, 100};
+        int[] w = {45, 140, 170, 60, 70, 230, 90, 80, 100};
         for (int i = 0; i < w.length; i++) historyTable.getColumnModel().getColumn(i).setPreferredWidth(w[i]);
     }
 
@@ -621,6 +667,7 @@ public class FileClientGui extends JFrame {
 
         final int fr = rounds;
         final int job = ++jobSeq;
+        jobStartTimes.put(job, java.time.LocalDateTime.now().format(TS_FMT));
         Thread.ofVirtual().start(() -> runDownload(h, basePort, fileName, useNio, workers, dir, fr, job));
     }
 
@@ -944,6 +991,7 @@ public class FileClientGui extends JFrame {
         Case c = cases.computeIfAbsent(run, k -> {
             Case n = new Case();
             n.run = run;
+            n.startedAt = jobStartTimes.getOrDefault(run, java.time.LocalDateTime.now().format(TS_FMT));
             n.file = file; n.mode = mode; n.workers = workers; n.size = size;
             return n;
         });
@@ -959,7 +1007,7 @@ public class FileClientGui extends JFrame {
         historyModel.setRowCount(0);
         for (Case c : cases.values()) {
             historyModel.addRow(new Object[]{
-                    c.run, c.file, c.mode, c.workers, c.timesText(),
+                    c.run, c.startedAt, c.file, c.mode, c.workers, c.timesText(),
                     String.format("%.2f", c.avg()), String.format("%.2f", c.mbps()), c.sizeHash()});
         }
         if (historyModel.getRowCount() > 0) {
@@ -974,6 +1022,7 @@ public class FileClientGui extends JFrame {
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (r != JOptionPane.OK_OPTION) return;
         cases.clear();
+        jobStartTimes.clear();
         refreshHistory();
         statusLeft.setText("History cleared");
     }
@@ -988,11 +1037,11 @@ public class FileClientGui extends JFrame {
             int per = list.stream().mapToInt(c -> c.times.size()).max().orElse(0);
             double mb = list.get(0).size / 1048576.0;
             sb.append(String.format("========== Summary (%s, %.2f MB, %d per case) ==========%n", e.getKey(), mb, per));
-            sb.append(String.format("%-3s | %-5s | %-7s | %-28s | %-11s | %-8s | %s%n",
-                    "Run", "Mode", "workers", "time per round (s)", "average (s)", "MB/s", "size/hash"));
+            sb.append(String.format("%-3s | %-19s | %-5s | %-7s | %-28s | %-11s | %-8s | %s%n",
+                    "Run", "Started", "Mode", "workers", "time per round (s)", "average (s)", "MB/s", "size/hash"));
             for (Case c : list) {
-                sb.append(String.format("%-3d | %-5s | %-7d | %-28s | %-11.2f | %-8.2f | %s%n",
-                        c.run, c.mode, c.workers, c.timesText(), c.avg(), c.mbps(), c.sizeHash()));
+                sb.append(String.format("%-3d | %-19s | %-5s | %-7d | %-28s | %-11.2f | %-8.2f | %s%n",
+                        c.run, c.startedAt, c.mode, c.workers, c.timesText(), c.avg(), c.mbps(), c.sizeHash()));
             }
             sb.append(System.lineSeparator());
         }
@@ -1011,11 +1060,11 @@ public class FileClientGui extends JFrame {
         fc.setSelectedFile(new File("download-history.csv"));
         if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
         try (PrintWriter w = new PrintWriter(fc.getSelectedFile(), StandardCharsets.UTF_8)) {
-            w.println("run,file,size_bytes,mode,workers,rounds,time_per_round_s,average_s,mb_per_s,size_hash");
+            w.println("run,started_at,file,size_bytes,mode,workers,rounds,time_per_round_s,average_s,mb_per_s,size_hash");
             for (Case c : cases.values()) {
-                w.printf("%d,\"%s\",%d,%s,%d,%d,\"%s\",%.4f,%.4f,%s%n",
-                        c.run, c.file.replace("\"", "\"\""), c.size, c.mode, c.workers, c.times.size(),
-                        c.timesText(), c.avg(), c.mbps(), c.sizeHash());
+                w.printf("%d,%s,\"%s\",%d,%s,%d,%d,\"%s\",%.4f,%.4f,%s%n",
+                        c.run, c.startedAt, c.file.replace("\"", "\"\""), c.size, c.mode, c.workers,
+                        c.times.size(), c.timesText(), c.avg(), c.mbps(), c.sizeHash());
             }
             statusLeft.setText("History exported to " + fc.getSelectedFile().getName());
         } catch (IOException ex) {
@@ -1072,6 +1121,7 @@ public class FileClientGui extends JFrame {
         f.setForeground(TEXT_MAIN);
         f.setBackground(Color.WHITE);
         f.setCaretColor(PRIMARY_BLUE);
+        f.putClientProperty("stretch", cols >= 10);
         f.setBorder(fieldBorder(false));
         f.addFocusListener(new FocusAdapter() {
             @Override public void focusGained(FocusEvent e) { f.setBorder(fieldBorder(true)); }
@@ -1086,10 +1136,23 @@ public class FileClientGui extends JFrame {
                 BorderFactory.createEmptyBorder(focused ? 5 : 6, focused ? 7 : 8, focused ? 5 : 6, focused ? 7 : 8));
     }
 
+    /** Single-line row (never wraps). Fields marked "stretch" grow; everything else keeps its size. */
     static JPanel row(Component... cs) {
-        JPanel p = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        JPanel p = new JPanel();
+        p.setLayout(new BoxLayout(p, BoxLayout.X_AXIS));
         p.setOpaque(false);
-        for (Component c : cs) p.add(c);
+        boolean stretch = false;
+        for (int i = 0; i < cs.length; i++) {
+            Component c = cs[i];
+            if (i > 0) p.add(Box.createHorizontalStrut(8));
+            boolean st = c instanceof JComponent jc && Boolean.TRUE.equals(jc.getClientProperty("stretch"));
+            Dimension d = c.getPreferredSize();
+            c.setMinimumSize(d);
+            if (st) stretch = true; else c.setMaximumSize(d);
+            if (c instanceof JComponent jc) jc.setAlignmentY(Component.CENTER_ALIGNMENT);
+            p.add(c);
+        }
+        if (!stretch) p.add(Box.createHorizontalGlue());
         p.setAlignmentX(LEFT_ALIGNMENT);
         p.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
         return p;
@@ -1156,6 +1219,18 @@ public class FileClientGui extends JFrame {
         }
     }
 
+    /** Panel that follows the viewport width, and its height too whenever there is spare room. */
+    static class ScrollPanel extends JPanel implements Scrollable {
+        ScrollPanel(LayoutManager lm) { super(lm); setOpaque(false); }
+        @Override public Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
+        @Override public int getScrollableUnitIncrement(Rectangle r, int o, int d) { return 16; }
+        @Override public int getScrollableBlockIncrement(Rectangle r, int o, int d) { return Math.max(32, r.height - 32); }
+        @Override public boolean getScrollableTracksViewportWidth() { return true; }
+        @Override public boolean getScrollableTracksViewportHeight() {
+            return getParent() instanceof JViewport vp && vp.getHeight() >= getPreferredSize().height;
+        }
+    }
+
     static class MinimalPanel extends JPanel {
         final Color bgColor;
         MinimalPanel(Color bgColor) {
@@ -1187,6 +1262,7 @@ public class FileClientGui extends JFrame {
             t.setForeground(TEXT_FAINT);
             value.setFont(new Font("SansSerif", Font.BOLD, 18));
             value.setForeground(TEXT_MAIN);
+            value.setMinimumSize(new Dimension(0, value.getPreferredSize().height));
             add(t);
             add(Box.createVerticalStrut(2));
             add(value);
@@ -1217,6 +1293,7 @@ public class FileClientGui extends JFrame {
         @Override public Dimension getPreferredSize() {
             return new Dimension(getFontMetrics(getFont()).stringWidth(text) + 36, 26);
         }
+        @Override public Dimension getMinimumSize() { return getPreferredSize(); }
         @Override protected void paintComponent(Graphics g0) {
             Graphics2D g = (Graphics2D) g0.create();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
@@ -1257,6 +1334,8 @@ public class FileClientGui extends JFrame {
             int w = getFontMetrics(getFont()).stringWidth(getText()) + 28;
             return new Dimension(Math.max(w, 38), 36);
         }
+
+        @Override public Dimension getMinimumSize() { return getPreferredSize(); }
 
         @Override protected void paintComponent(Graphics g0) {
             Graphics2D g = (Graphics2D) g0.create();
@@ -1312,6 +1391,7 @@ public class FileClientGui extends JFrame {
         }
 
         @Override public Dimension getPreferredSize() { return new Dimension(320, h); }
+        @Override public Dimension getMinimumSize() { return new Dimension(60, h); }
         @Override public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, h); }
 
         @Override protected void paintComponent(Graphics g0) {
@@ -1375,6 +1455,7 @@ public class FileClientGui extends JFrame {
 
     static class HeaderPanel extends JComponent {
         @Override public Dimension getPreferredSize() { return new Dimension(100, 64); }
+        @Override public Dimension getMinimumSize() { return new Dimension(100, 64); }
 
         @Override protected void paintComponent(Graphics g0) {
             Graphics2D g = (Graphics2D) g0.create();
