@@ -205,7 +205,7 @@ public class FileClient {
 
     // ---------- worker แบบ NIO ----------
     static void workerNio(String host, int port, String name, long off, long len, Path out) throws IOException {
-        try (SocketChannel sc = SocketChannel.open(new InetSocketAddress(host, port));
+        try (SocketChannel sc = openNio(host, port);
              FileChannel fc = FileChannel.open(out, StandardOpenOption.WRITE)) {  // channel ของ worker นี้เอง
             sc.setOption(StandardSocketOptions.TCP_NODELAY, true);
             ByteBufferUtil.writeAll(sc, "GET " + name + " " + off + " " + len + "\n");
@@ -214,12 +214,34 @@ public class FileClient {
             expectOk(readLine(Channels.newInputStream(sc)), len);
 
             long pos = off, remaining = len;
+            java.nio.ByteBuffer fb = null;
             while (remaining > 0) {
                 long n = fc.transferFrom(sc, pos, remaining);
+                if (n <= 0) {                       // fallback: อ่านจาก socket เองแล้วเขียนลงไฟล์ตาม offset
+                    if (fb == null) fb = java.nio.ByteBuffer.allocateDirect(BUF_SIZE);
+                    fb.clear();
+                    fb.limit((int) Math.min(BUF_SIZE, remaining));
+                    int r = sc.read(fb);
+                    if (r > 0) {
+                        fb.flip();
+                        int w = 0;
+                        while (fb.hasRemaining()) w += fc.write(fb, pos + w);
+                        n = w;
+                    }
+                }
                 if (n <= 0) throw new EOFException("ได้ข้อมูลไม่ครบ ขาดอีก " + remaining + " byte");
                 pos += n;
                 remaining -= n;
             }
+        }
+    }
+
+    static SocketChannel openNio(String host, int port) throws IOException {
+        try {
+            return SocketChannel.open(new InetSocketAddress(host, port));
+        } catch (IOException e) {
+            throw new IOException("เชื่อมต่อพอร์ต NIO " + port + " ไม่ได้ (" + e.getMessage()
+                    + ") - ตรวจว่า server รันอยู่และพอร์ต " + port + " เปิดอยู่ (NIO = port + 1)", e);
         }
     }
 
