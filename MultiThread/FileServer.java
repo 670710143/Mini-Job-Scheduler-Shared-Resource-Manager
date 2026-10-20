@@ -30,6 +30,7 @@ public class FileServer {
 
     static final int BUF_SIZE = 64 * 1024;
     static Path dir;
+    static volatile int ioPort, nioPort;      // ให้ client ถามได้ว่าพอร์ต I/O และ NIO คือเลขอะไร
     static final Map<String, String> hashCache = new ConcurrentHashMap<>();
 
     // ---------- abstraction ของ connection สองแบบ ----------
@@ -99,8 +100,13 @@ public class FileServer {
             try (FileChannel fc = FileChannel.open(file, StandardOpenOption.READ)) {
                 long pos = offset, remaining = length;
                 ByteBuffer fallback = null;
+                boolean useTransfer = true;
                 while (remaining > 0) {                         // transferTo อาจส่งได้น้อยกว่าที่ขอ ต้องวนซ้ำ
-                    long n = fc.transferTo(pos, remaining, sc);
+                    long n = 0;
+                    if (useTransfer) {
+                        try { n = fc.transferTo(pos, remaining, sc); }
+                        catch (IOException e) { useTransfer = false; }   // transferTo ใช้ไม่ได้บนระบบนี้ -> คัดลอกเองด้วย read/write
+                    }
                     if (n <= 0) {
                         // บน virtual thread ตัว JDK ตั้ง socket เป็น non-blocking ภายใน เมื่อ send buffer เต็ม
                         // sendfile จะคืน 0 แทนการรอ จึงเขียนก้อนเล็กด้วย write() (ซึ่งจอด thread รอได้) แล้ววนต่อ
@@ -145,6 +151,7 @@ public class FileServer {
                     case "LIST" -> doList(c);
                     case "INFO" -> doInfo(c, t);
                     case "HASH" -> doHash(c, t);
+                    case "PORTS" -> c.send("PORTS " + ioPort + " " + nioPort + "\n");
                     case "GET" -> doGet(c, t);
                     case "QUIT" -> { return; }
                     default -> c.send(" >ERROR 400 Unknown command\n");
@@ -240,6 +247,8 @@ public class FileServer {
             return;
         }
         int port = Integer.parseInt(a[0]);
+        ioPort = port;
+        nioPort = port + 1;
         dir = Paths.get(a[1]).toAbsolutePath().normalize();
         if (!Files.isDirectory(dir)) {
             System.err.println(" >Folder not found: " + dir);
@@ -248,10 +257,36 @@ public class FileServer {
         System.out.println(" Folder " + dir);
         System.out.println("  Traditional I/O  port " + port);
         System.out.println("  NIO transferTo   port " + (port + 1));
+       
+        try {
+            for (NetworkInterface ni : Collections.list(NetworkInterface.getNetworkInterfaces()))
+                if (ni.isUp() && !ni.isLoopback())
+                    for (InetAddress ia : Collections.list(ni.getInetAddresses()))
+                        if (ia instanceof Inet4Address) System.out.println("  Reachable at " + ia.getHostAddress());
+        } catch (Exception ignored) { }
 
         ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();   // 1 connection = 1 virtual thread
         Thread ioLoop = Thread.ofPlatform().name("accept-io").start(() -> acceptIo(port, pool));
         Thread nioLoop = Thread.ofPlatform().name("accept-nio").start(() -> acceptNio(port + 1, pool));
+        // คอนโซลควบคุม server: พิมพ์ quit / exit / q เพื่อปิดโปรแกรม (หรือกด Ctrl+C)
+        Thread.ofPlatform().daemon(true).name("console").start(() -> {
+            System.out.println("  Type 'quit' to stop the server  |  'help' for commands");
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(System.in))) {
+                String l;
+                while ((l = br.readLine()) != null) {
+                    switch (l.trim().toLowerCase()) {
+                        case "quit", "exit", "q" -> {
+                            System.out.println(" Shutting down server...");
+                            pool.shutdownNow();          // ตัด connection ที่ยังโหลดค้างอยู่
+                            System.exit(0);
+                        }
+                        case "help" -> System.out.println("  quit | exit | q   stop the server");
+                        case "" -> { }
+                        default -> System.out.println("  Unknown command (type 'help')");
+                    }
+                }
+            } catch (IOException ignored) { }
+        });
         ioLoop.join();
         nioLoop.join();
     }
@@ -271,9 +306,18 @@ public class FileServer {
 
     static void acceptNio(int port, ExecutorService pool) {
         try (ServerSocketChannel ssc = ServerSocketChannel.open()) {
+            ssc.setOption(StandardSocketOptions.SO_REUSEADDR, true);
             ssc.bind(new InetSocketAddress(port), 128);
             while (true) {
-                SocketChannel sc = ssc.accept();
+                SocketChannel sc;
+                try {
+                    sc = ssc.accept();
+                } catch (ClosedChannelException e) {
+                    throw e;
+                } catch (IOException e) {            // accept พลาดชั่วคราว: อย่าให้ NIO acceptor ตายทั้งตัว
+                    System.err.println("> NIO accept error: " + e);
+                    continue;
+                }
                 pool.submit(() -> {
                     try { serve(new NioConn(sc)); } catch (IOException ignored) { }
                 });
