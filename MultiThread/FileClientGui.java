@@ -478,7 +478,7 @@ public class FileClientGui extends JFrame {
     }
 
     void updateStatusRight() {
-        statusRight.setText("Engine: " + (useNio ? "NIO Transfer" : "Traditional I/O")
+        statusRight.setText("Engine: " + (useNio ? "NIO Transfer (port + 1)" : "Traditional I/O")
                 + "  |  Workers: " + workersField.getText().trim()
                 + "  |  Rounds: " + roundsField.getText().trim());
     }
@@ -749,7 +749,18 @@ public class FileClientGui extends JFrame {
             }
             starts = st;
             ends = en;
-            final int p = nioMode ? basePort + 1 : basePort;
+            // ถามพอร์ตจริงจาก server (PORTS) เพื่อไม่ให้พลาดเมื่อผู้ใช้กรอกพอร์ต NIO ลงช่อง Port
+            // server เก่าที่ไม่รู้จักคำสั่งนี้ -> ใช้กติกาเดิม (NIO = base + 1)
+            int ioP = basePort, nioP = basePort + 1;
+            try {
+                String pl = requestServer(h, basePort, "PORTS");
+                if (pl != null && pl.startsWith("PORTS ")) {
+                    String[] pt = pl.trim().split("\\s+");
+                    ioP = Integer.parseInt(pt[1]);
+                    nioP = Integer.parseInt(pt[2]);
+                }
+            } catch (Exception ignored) { }
+            final int p = nioMode ? nioP : ioP;
             final String modeName = nioMode ? "NIO" : "I/O";
             final int nParts = parts;
             SwingUtilities.invokeLater(() -> {
@@ -873,7 +884,8 @@ public class FileClientGui extends JFrame {
     }
 
     static String rootMessage(Throwable t) {
-        while (t.getCause() != null) t = t.getCause();
+        while ((t instanceof ExecutionException || t instanceof CompletionException) && t.getCause() != null)
+            t = t.getCause();
         return t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName();
     }
 
@@ -900,7 +912,7 @@ public class FileClientGui extends JFrame {
     }
 
     private void workerNio(String h, int p, String name, long off, long len, Path out, int idx) throws IOException {
-        try (SocketChannel sc = SocketChannel.open(new InetSocketAddress(h, p));
+        try (SocketChannel sc = openNio(h, p);
              FileChannel fc = FileChannel.open(out, StandardOpenOption.WRITE)) {
             openResources.add(sc);
             sc.setOption(StandardSocketOptions.TCP_NODELAY, true);
@@ -909,14 +921,36 @@ public class FileClientGui extends JFrame {
             while (cmd.hasRemaining()) sc.write(cmd);
             expectOk(readLine(Channels.newInputStream(sc)), len);
             long pos = off, rem = len;
+            java.nio.ByteBuffer fb = null;
             while (rem > 0 && !cancelled) {
                 long n = fc.transferFrom(sc, pos, Math.min(rem, NIO_CHUNK));
+                if (n <= 0) {                       // fallback: read the socket ourselves, write at the offset
+                    if (fb == null) fb = java.nio.ByteBuffer.allocateDirect(BUF);
+                    fb.clear();
+                    fb.limit((int) Math.min(BUF, rem));
+                    int r = sc.read(fb);
+                    if (r > 0) {
+                        fb.flip();
+                        int w = 0;
+                        while (fb.hasRemaining()) w += fc.write(fb, pos + w);
+                        n = w;
+                    }
+                }
                 if (n <= 0) throw new EOFException("Incomplete NIO transfer");
                 pos += n;
                 rem -= n;
                 done.addAndGet(idx, n);
                 totalDone.addAndGet(n);
             }
+        }
+    }
+
+    static SocketChannel openNio(String h, int p) throws IOException {
+        try {
+            return SocketChannel.open(new InetSocketAddress(h, p));
+        } catch (IOException e) {
+            throw new IOException("Cannot connect to NIO port " + p + " (" + e.getMessage()
+                    + "). NIO uses base port + 1 - check the server is running and that port is open", e);
         }
     }
 
