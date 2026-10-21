@@ -1,0 +1,49 @@
+﻿[      27 ms] [main      ] SYSTEM_START       workload=workloads\jobs_printer.csv policy=priority workers=3 printer=2 database=2
+[      44 ms] [generator ] JOB_ARRIVED        job=P01 priority=2 work=250ms resource=PRINTER(1200ms)
+[      48 ms] [worker-1  ] JOB_STARTED        job=P01 priority=2
+[      48 ms] [scheduler ] SYSTEM             [Scheduler] P01 added to -> ReadyQueue (size=1)
+[      53 ms] [monitor   ] MONITOR            ready=0 running=0 completed=0 printer=2/2 database=2/2
+[     101 ms] [generator ] JOB_ARRIVED        job=P02 priority=1 work=300ms resource=PRINTER(1200ms)
+[     101 ms] [scheduler ] SYSTEM             [Scheduler] P02 added to -> ReadyQueue (size=1)
+[     101 ms] [worker-2  ] JOB_STARTED        job=P02 priority=1
+[     202 ms] [generator ] JOB_ARRIVED        job=P03 priority=3 work=250ms resource=PRINTER(1200ms)
+[     202 ms] [scheduler ] SYSTEM             [Scheduler] P03 added to -> ReadyQueue (size=1)
+[     202 ms] [worker-3  ] JOB_STARTED        job=P03 priority=3
+[     301 ms] [generator ] JOB_ARRIVED        job=P04 priority=2 work=300ms resource=PRINTER(1200ms)
+[     302 ms] [scheduler ] SYSTEM             [Scheduler] P04 added to -> ReadyQueue (size=1)
+[     400 ms] [generator ] JOB_ARRIVED        job=P05 priority=1 work=250ms resource=PRINTER(1200ms)
+[     401 ms] [scheduler ] SYSTEM             [Scheduler] P05 added to -> ReadyQueue (size=2)
+[     502 ms] [generator ] JOB_ARRIVED        job=P06 priority=3 work=300ms resource=PRINTER(1200ms)
+[     502 ms] [scheduler ] SYSTEM             [Scheduler] P06 added to -> ReadyQueue (size=3)
+[     503 ms] [scheduler ] SYSTEM             [Scheduler] : Closed ReadyQueue 
+[    1053 ms] [monitor   ] MONITOR            ready=3 running=3 completed=0 printer=0/2 database=2/2
+[    1499 ms] [worker-1  ] JOB_STARTED        job=P05 priority=1
+[    1604 ms] [worker-2  ] JOB_STARTED        job=P04 priority=2
+[    2055 ms] [monitor   ] MONITOR            ready=1 running=3 completed=2 printer=0/2 database=2/2
+[    2700 ms] [worker-3  ] JOB_STARTED        job=P06 priority=3
+[    3056 ms] [monitor   ] MONITOR            ready=0 running=2 completed=4 printer=0/2 database=2/2
+[    4057 ms] [monitor   ] MONITOR            ready=0 running=1 completed=5 printer=1/2 database=2/2
+
+=============== PER-JOB CHECK (TAT = WT + work + RW + resource) ===============
+job           WT    work      RW     res |     TAT  expected   diff  status
+P01            2     250       0    1200 |    1455      1452      3  OK
+P02            0     300       0    1200 |    1503      1500      3  OK
+P03            0     250    1045    1200 |    2498      2495      3  OK
+P04         1303     300     796    1200 |    3600      3599      1  OK
+P05         1099     250       0    1200 |    2550      2549      1  OK
+P06         2198     300       0    1200 |    3700      3698      2  OK
+=============== START ORDER ===============
+
+START ORDER         : P01 -> P02 -> P03 -> P05 -> P04 -> P06
+Completion order    : P01->P02->P03->P05->P04->P06
+=============== SUMMARY ===============
+Completed jobs      : 6 / 6
+Simulation time     : 4202 ms
+Avg Waiting Time    : 767 ms
+Avg Turnaround Time : 2551 ms
+Avg Resource Wait   : 307 ms (เฉลี่ยจาก 6 งานที่ใช้ resource)
+Throughput          : 1.43 jobs/second
+Equation check      : max |diff| = 3 ms, เกิน 50 ms: 0 งาน
+RESULT avgWT=767 avgTAT=2551 throughput=1.43 avgRW=307
+=======================================
+[    4215 ms] [main      ] SYSTEM_STOP        completed=6/6

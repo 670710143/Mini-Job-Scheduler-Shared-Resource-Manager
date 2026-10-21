@@ -1,0 +1,68 @@
+﻿[      30 ms] [main      ] SYSTEM_START       workload=workloads\jobs_standard.csv policy=priority workers=5 printer=1 database=2
+[      48 ms] [generator ] JOB_ARRIVED        job=J01 priority=5 work=2500ms
+[      52 ms] [worker-1  ] JOB_STARTED        job=J01 priority=5
+[      52 ms] [scheduler ] SYSTEM             [Scheduler] J01 added to -> ReadyQueue (size=1)
+[      57 ms] [monitor   ] MONITOR            ready=0 running=0 completed=0 printer=1/1 database=2/2
+[     101 ms] [generator ] JOB_ARRIVED        job=J02 priority=5 work=2400ms resource=PRINTER(1200ms)
+[     101 ms] [scheduler ] SYSTEM             [Scheduler] J02 added to -> ReadyQueue (size=1)
+[     101 ms] [worker-3  ] JOB_STARTED        job=J02 priority=5
+[     201 ms] [generator ] JOB_ARRIVED        job=J03 priority=5 work=2500ms
+[     201 ms] [worker-4  ] JOB_STARTED        job=J03 priority=5
+[     201 ms] [scheduler ] SYSTEM             [Scheduler] J03 added to -> ReadyQueue (size=1)
+[     302 ms] [generator ] JOB_ARRIVED        job=J04 priority=5 work=2400ms resource=DATABASE(1000ms)
+[     302 ms] [worker-2  ] JOB_STARTED        job=J04 priority=5
+[     302 ms] [scheduler ] SYSTEM             [Scheduler] J04 added to -> ReadyQueue (size=1)
+[     401 ms] [generator ] JOB_ARRIVED        job=J05 priority=5 work=2500ms resource=PRINTER(1200ms)
+[     401 ms] [worker-5  ] JOB_STARTED        job=J05 priority=5
+[     401 ms] [scheduler ] SYSTEM             [Scheduler] J05 added to -> ReadyQueue (size=1)
+[     501 ms] [generator ] JOB_ARRIVED        job=J06 priority=4 work=2400ms resource=DATABASE(1000ms)
+[     501 ms] [scheduler ] SYSTEM             [Scheduler] J06 added to -> ReadyQueue (size=1)
+[    1001 ms] [generator ] JOB_ARRIVED        job=J07 priority=1 work=700ms resource=PRINTER(900ms)
+[    1001 ms] [scheduler ] SYSTEM             [Scheduler] J07 added to -> ReadyQueue (size=2)
+[    1058 ms] [monitor   ] MONITOR            ready=2 running=5 completed=0 printer=1/1 database=2/2
+[    1201 ms] [generator ] JOB_ARRIVED        job=J08 priority=1 work=600ms resource=PRINTER(900ms)
+[    1201 ms] [scheduler ] SYSTEM             [Scheduler] J08 added to -> ReadyQueue (size=3)
+[    1401 ms] [generator ] JOB_ARRIVED        job=J09 priority=1 work=700ms resource=DATABASE(900ms)
+[    1401 ms] [scheduler ] SYSTEM             [Scheduler] J09 added to -> ReadyQueue (size=4)
+[    1600 ms] [generator ] JOB_ARRIVED        job=J10 priority=2 work=600ms
+[    1601 ms] [scheduler ] SYSTEM             [Scheduler] J10 added to -> ReadyQueue (size=5)
+[    1601 ms] [scheduler ] SYSTEM             [Scheduler] : Closed ReadyQueue 
+[    2059 ms] [monitor   ] MONITOR            ready=5 running=5 completed=0 printer=1/1 database=2/2
+[    2553 ms] [worker-1  ] JOB_STARTED        job=J07 priority=1
+[    2701 ms] [worker-4  ] JOB_STARTED        job=J08 priority=1
+[    3061 ms] [monitor   ] MONITOR            ready=3 running=5 completed=2 printer=0/1 database=1/2
+[    3702 ms] [worker-3  ] JOB_STARTED        job=J09 priority=1
+[    3706 ms] [worker-2  ] JOB_STARTED        job=J10 priority=2
+[    4062 ms] [monitor   ] MONITOR            ready=1 running=5 completed=4 printer=0/1 database=2/2
+[    4306 ms] [worker-2  ] JOB_STARTED        job=J06 priority=4
+[    5064 ms] [monitor   ] MONITOR            ready=0 running=4 completed=6 printer=0/1 database=1/2
+[    6064 ms] [monitor   ] MONITOR            ready=0 running=2 completed=8 printer=0/1 database=2/2
+[    7065 ms] [monitor   ] MONITOR            ready=0 running=1 completed=9 printer=1/1 database=1/2
+
+=============== PER-JOB CHECK (TAT = WT + work + RW + resource) ===============
+job           WT    work      RW     res |     TAT  expected   diff  status
+J01            1    2500       0       0 |    2504      2501      3  OK
+J02            0    2400       0    1200 |    3601      3600      1  OK
+J03            0    2500       0       0 |    2500      2500      0  OK
+J04            0    2400       0    1000 |    3404      3400      4  OK
+J05            0    2500     800    1200 |    4502      4500      2  OK
+J06         3805    2400       0    1000 |    7206      7205      1  OK
+J07         1552     700    1650     900 |    4803      4802      1  OK
+J08         1500     600    2502     900 |    5504      5502      2  OK
+J09         2301     700       0     900 |    3902      3901      1  OK
+J10         2106     600       0       0 |    2706      2706      0  OK
+=============== START ORDER ===============
+
+START ORDER         : J01 -> J02 -> J03 -> J04 -> J05 -> J07 -> J08 -> J09 -> J10 -> J06
+Completion order    : J01->J03->J02->J04->J10->J05->J09->J07->J08->J06
+=============== SUMMARY ===============
+Completed jobs      : 10 / 10
+Simulation time     : 7707 ms
+Avg Waiting Time    : 1127 ms
+Avg Turnaround Time : 4063 ms
+Avg Resource Wait   : 707 ms (เฉลี่ยจาก 7 งานที่ใช้ resource)
+Throughput          : 1.30 jobs/second
+Equation check      : max |diff| = 4 ms, เกิน 50 ms: 0 งาน
+RESULT avgWT=1127 avgTAT=4063 throughput=1.30 avgRW=707
+=======================================
+[    7722 ms] [main      ] SYSTEM_STOP        completed=10/10
