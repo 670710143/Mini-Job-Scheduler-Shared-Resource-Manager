@@ -1,89 +1,114 @@
-# Multi-threaded File Download Client/Server (Traditional I/O vs NIO)
+# Mini Job Scheduler & Shared Resource Manager
 
-ต้องใช้ JDK 21 ขึ้นไป (ใช้ Virtual Thread)
+โปรแกรมจำลองระบบรับงาน (Job) ด้วย Java Multithreading
+มี Scheduler จัดลำดับงานแบบ FCFS หรือ Priority, Worker Thread หลายตัวรับงานไปทำพร้อมกัน
+และทรัพยากรร่วม (PRINTER / DATABASE) ที่ควบคุมด้วย Semaphore (fair = true)
 
-## Compile
-
-```
-javac FileServer.java FileClient.java
-```
-
-## Run
-
-เตรียมโฟลเดอร์ `share` ที่มีไฟล์ใหญ่ (ชื่อไฟล์ห้ามมีช่องว่าง) แล้วเปิด Server:
+## โครงสร้างระบบ
 
 ```
-java FileServer 9000 share
+JobGenerator → arrivalQueue → Scheduler → ReadyQueue → Worker × N
+                                                         ├─ ResourceManager (Semaphore)
+                                                         └─ Statistics + ProjectLogger
+Monitor → รายงานสถานะทุก ~1,000 ms
 ```
 
-Server เปิด 2 พอร์ตพร้อมกัน เพื่อเทียบกันโดยใช้ไฟล์และเครื่องเดียวกัน
-- `9000` = Traditional I/O (`ServerSocket`, `RandomAccessFile.read`, `OutputStream.write`)
-- `9001` = NIO (`ServerSocketChannel`, `FileChannel.transferTo`)
-
-Client (คนละ terminal):
-
-```
-java FileClient localhost 9000 list
-java FileClient localhost 9000 get big.bin io 10 3      # โหมด io, 10 workers, 3 รอบ
-java FileClient localhost 9000 get big.bin nio 1 3      # โหมด nio, 1 worker, 3 รอบ
-java FileClient localhost 9000 bench big.bin 3          # รันครบ io/nio x 1/10 workers x 3 รอบ + ตารางสรุป
-```
-
-พอร์ตที่ให้ใน Client คือพอร์ตฐาน (io ใช้พอร์ตนั้น, nio ใช้พอร์ต+1) ไฟล์ที่โหลดอยู่ใน `downloads/`
-ถ้า Windows แสดงภาษาไทยเพี้ยน ให้รัน `chcp 65001` ก่อน
-
-## Protocol (TCP, คำสั่งเป็นข้อความ 1 บรรทัด ลงท้าย `\n`)
-
-| Request | Response |
+| ไฟล์ | หน้าที่ |
 |---|---|
-| `LIST` | `FILE <name> <size>` หลายบรรทัด แล้วปิดด้วย `END` |
-| `INFO <name>` | `SIZE <bytes>` หรือ `ERROR 404 File not found` |
-| `HASH <name>` | `HASH <sha256-hex>` (ใช้ตรวจความถูกต้องหลังโหลด) |
-| `GET <name> <offset> <length>` | `OK <length>\n` ตามด้วย payload `length` byte พอดี |
-| ผิดพลาด | `ERROR 400` (รูปแบบผิด/คำสั่งไม่รู้จัก), `ERROR 404` (ไม่พบไฟล์), `ERROR 416` (ช่วง byte ผิด) |
-| `QUIT` | ปิด connection |
+| `Main.java` | สร้าง object, เริ่ม Thread, รอจนจบ, shutdown, พิมพ์สรุป |
+| `JobGenerator.java` | ปล่อย Job ตามเวลา `arrivalMs` แล้วส่ง POISON เมื่อครบ |
+| `Scheduler.java` | รับงานจาก arrivalQueue ใส่ ReadyQueue และปิดคิวเมื่อจบ |
+| `ReadyQueue.java` | คิวงานตามนโยบาย (PriorityQueue + ReentrantLock + Condition) |
+| `Worker.java` | รับงาน ทำงานหลัก ขอ/คืน resource บันทึกเวลา |
+| `ResourceManager.java` | Semaphore แบบ fair ของ PRINTER และ DATABASE |
+| `Statistics.java` | ตัวนับ ready/running/completed และสรุปผล (thread-safe) |
+| `Monitor.java` | รายงานสถานะระบบเป็นระยะ |
+| `Job.java` | ข้อมูลงานและค่าที่ใช้วัดผล |
+| `Config.java`, `ProjectLogger.java`, `WorkloadLoader.java`, `ResourceType.java`, `WorkloadFormatException.java` | โค้ดตั้งต้นจากอาจารย์ |
 
-1 connection ส่งได้หลายคำสั่งต่อเนื่อง
+## วิธี compile
 
-## การทำงาน
+ต้องใช้ JDK 11 ขึ้นไป (ตัวอ่าน workload ใช้ `Path.of`)
 
-1. Client ขอ `INFO` (ขนาด) และ `HASH` จาก Server
-2. Client คำนวณช่วง byte ให้ N workers (ค่าเริ่มต้น 10): `chunk = size / N` โดย worker สุดท้ายรับเศษ ช่วงไม่ซ้อนกัน
-3. แต่ละ worker (Virtual Thread) เปิด connection ของตนเอง ส่ง `GET` พร้อม offset/length และรับเฉพาะช่วงนั้น
-4. เขียนลง final file ตาม offset โดยแต่ละ worker เปิด `RandomAccessFile` (io) หรือ `FileChannel` (nio) ของตัวเอง
-   (ไฟล์ถูกจองขนาดไว้ก่อนด้วย `setLength`)
-5. โหลดครบแล้วตรวจขนาดไฟล์และ SHA-256 เทียบกับที่ Server รายงาน
-6. Server: 1 connection = 1 Virtual Thread (`newVirtualThreadPerTaskExecutor`)
+```powershell
+# จากโฟลเดอร์โปรเจกต์ (Windows PowerShell)
+javac -encoding UTF-8 src\*.java
+```
 
-คำสั่ง `bench` วอร์มอัพ 1 รอบ (ไม่นับผล) ก่อน เพื่อให้ไฟล์อยู่ใน page cache เท่ากันทุกกรณี
-เวลาที่วัดคือ จองไฟล์ + โหลดทุกช่วง (ไม่รวมเวลาคำนวณ hash)
+```bash
+# Linux / macOS
+javac -encoding UTF-8 src/*.java
+```
 
-## ตัวอย่างผลทดลอง (รันใน sandbox ของผู้เขียนโค้ด ไฟล์สุ่ม 190.73 MB, localhost — ให้รันซ้ำบนเครื่องตัวเองเพื่อใส่ในรายงาน)
+## วิธีรัน
 
-| โหมด | workers | เวลาแต่ละรอบ (s) | เฉลี่ย (s) | MB/s | size/hash |
-|---|---|---|---|---|---|
-| IO | 1 | 0.702 0.561 0.485 | 0.583 | 327.2 | OK |
-| IO | 10 | 0.516 0.489 0.565 | 0.523 | 364.6 | OK |
-| NIO | 1 | 0.883 0.695 0.680 | 0.753 | 253.3 | OK |
-| NIO | 10 | 0.576 0.766 0.639 | 0.660 | 289.0 | OK |
+```
+java -cp src Main <workload.csv> <fcfs|priority> <workers> <printerPermits> <databasePermits>
+```
 
-## ประเด็นสำหรับอธิบายในรายงาน
+| ลำดับ | argument | ความหมาย |
+|---|---|---|
+| 1 | `workload.csv` | ไฟล์ชุดงานทดสอบ |
+| 2 | `fcfs` หรือ `priority` | นโยบายการจัดลำดับงาน |
+| 3 | `workers` | จำนวน Worker Thread (≥ 1) |
+| 4 | `printerPermits` | จำนวนสิทธิ์ใช้ PRINTER พร้อมกัน (≥ 1) |
+| 5 | `databasePermits` | จำนวนสิทธิ์ใช้ DATABASE พร้อมกัน (≥ 1) |
 
-**ทำไม 10 workers ไม่เร็วขึ้น 10 เท่า**
-- loopback, page cache, disk และ CPU เป็นทรัพยากรร่วมกัน เพิ่ม connection ไม่ได้เพิ่มเพดาน
-- มี overhead ของการสร้าง connection, context switch และ worker ที่เสร็จก่อนต้องรอตัวที่ช้าสุด
-- ไฟล์ขนาดเล็ก overhead มีสัดส่วนมากขึ้น
+ต้องใส่ครบทั้ง 5 ตัว ไม่มีค่า default ซ่อนอยู่ ถ้าใส่ไม่ครบหรือผิด โปรแกรมจะแสดง Usage แล้วจบก่อนเริ่ม Thread ใดๆ
 
-**ทำไม NIO ไม่ชนะทุกครั้ง**
-- `transferTo` (sendfile) ลดการ copy ระหว่าง kernel กับ user space ได้เฉพาะฝั่ง Server
-- ฝั่ง Client `transferFrom` จาก socket ไม่ใช่ zero-copy: JDK อ่านผ่าน buffer ชั่วคราวก่อนเขียนลงไฟล์
-- บน loopback ที่ข้อมูลอยู่ใน page cache แล้ว ส่วนต่างเล็กและแกว่งตามรอบ จึงอาจไม่ชนะ
-- มีรายละเอียดของ Virtual Thread: JDK ตั้ง socket เป็น non-blocking ภายในเมื่อใช้บน virtual thread ทำให้
-  `transferTo` คืน 0 เมื่อ send buffer เต็ม โค้ด `NioConn.sendRange` จึงเขียนก้อนเล็กด้วย `write()` แล้วเรียก
-  `transferTo` ต่อ (ในการทดสอบข้อมูลส่วนใหญ่ราว 96% ยังไปทาง sendfile)
+### ตัวอย่าง
 
-**ข้อจำกัดของการทดสอบผ่าน localhost**
-- Page Cache: รอบหลังๆ อ่านจาก RAM ไม่ใช่ดิสก์ ผลเร็วเกินจริงและทำให้ส่วนต่างของ I/O แต่ละวิธีเล็กลง
-- Loopback: ไม่ผ่าน NIC จริง ไม่มี latency/packet loss ของเครือข่ายจริง
-- Storage cache: cache ของดิสก์/SSD ควบคุมได้ยาก
-- Client กับ Server แย่ง CPU และ disk ของเครื่องเดียวกัน
+```
+java -cp src Main workloads\jobs_standard.csv priority 3 1 2
+```
+
+### เก็บ log ลงไฟล์
+
+สร้างโฟลเดอร์ `logs` ก่อน แล้ว redirect ผลลัพธ์
+
+```powershell
+# Windows PowerShell
+java -cp src Main workloads\jobs_standard.csv priority 3 1 2 | Out-File -Encoding utf8 logs\standard_priority_w3.log
+```
+
+```bash
+# Linux / macOS
+java -cp src Main workloads/jobs_standard.csv priority 3 1 2 > logs/standard_priority_w3.log
+```
+
+### รูปแบบ workload CSV
+
+```
+id,arrivalMs,priority,workMs,resource,resourceMs
+J01,0,5,2500,NONE,0
+```
+
+- `priority` 1 = สำคัญที่สุด
+- `resource` เป็น `NONE`, `PRINTER` หรือ `DATABASE`
+- `resource = NONE` ต้องมี `resourceMs = 0`
+
+## ผลลัพธ์ที่โปรแกรมพิมพ์
+
+1. Log เหตุการณ์ตามเวลา (`[เวลา ms] [ชื่อ Thread] EVENT รายละเอียด`) และสถานะจาก Monitor
+2. ตาราง PER-JOB CHECK ตรวจสมการ `TAT = WT + workMs + RW + resourceMs`
+3. START ORDER และ Completion order
+4. SUMMARY: avg Waiting, avg Turnaround, avg Resource Wait, Throughput
+5. บรรทัด `RESULT avgWT=... avgTAT=... throughput=... avgRW=...` สำหรับ grep ไปกรอกตารางผลลัพธ์
+
+## การทำงานที่ควรรู้
+
+- **Tie-break (Priority):** `priority` → `actualArrivalMs` → `id` ตัดสินจากข้อมูลของ Job ไม่ขึ้นกับว่า Thread ใดเข้าคิวก่อน (FCFS ใช้ `actualArrivalMs` → `id`)
+- **การปิดระบบ:** JobGenerator ส่ง POISON → Scheduler หยุดรับงานแล้ว `close()` ReadyQueue → Worker ทำงานที่ค้างจนหมดและออกเมื่อ `take()` คืน `null` → Main `join()` ทุก Thread แล้ว interrupt Monitor ไม่ใช้ `System.exit()`
+- **Resource:** acquire ก่อน try และ release ใน `finally` จึงคืน permit เสมอแม้ถูก interrupt
+- **นาฬิกา:** ทุกค่าที่วัดใช้ `ProjectLogger.now()` (นับจากตอนสร้าง logger) ตรวจย้อนกลับกับ log ได้
+
+## ข้อจำกัด
+
+- **Job ใช้ resource ได้ไม่เกิน 1 ชนิด** (ส่วนบังคับ) ยังไม่รองรับการถือหลาย resource พร้อมกัน
+- **Non-preemptive:** เมื่อ Worker รับ Job ไปแล้วจะทำจนจบ ไม่ถูกดึงกลับ
+- **ไม่มี Aging / MLFQ:** Priority อาจทำให้ Job priority ต่ำรอนาน (starvation) ได้ถ้ามีงานสำคัญเข้ามาต่อเนื่อง
+- **เวลาเป็นการจำลองด้วย `Thread.sleep`** ไม่ใช่ CPU burst หรือ I/O จริง และ `sleep` หลับเกินที่ขอเล็กน้อย สมการตรวจสอบจึงมีส่วนต่าง (diff) เล็กน้อย โปรแกรมยอมรับได้ไม่เกิน 50 ms ต่อ Job (`TOLERANCE_MS`) ถ้าเกินจะแสดง `CHECK`
+- **Nondeterminism:** รันซ้ำด้วยค่าเดิม เวลาและลำดับบางบรรทัดใน log อาจต่างกันเล็กน้อยจากการสลับ Thread ของ OS แต่กติกาจัดลำดับและแนวโน้มของผลต้องเหมือนเดิม
+- **Worker ถูก interrupt กลางงาน:** งานนั้นจะไม่ถูกส่งกลับเข้าคิวและไม่นับเป็นเสร็จ Summary จะรายงานจำนวนงานที่เสร็จไม่ครบ (permit ไม่หาย และโปรแกรมไม่ค้าง)
+- **Monitor** รายงานโดยประมาณทุก ~1,000 ms ค่า ready/running/completed อ่านใต้ล็อกเดียวของ `Statistics`
+- **Workload ผิดรูปแบบ:** `WorkloadLoader` ตรวจและแจ้งเลขบรรทัดที่ผิด แล้วโปรแกรมจบก่อนเริ่ม Thread
