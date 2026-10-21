@@ -1,0 +1,8 @@
+﻿#,Workload / Policy,Workers,Printer,DB,avg WT,avg TAT,Throughput,avg RW
+1,standard / FCFS,3,1,2,2978 ms,5481 ms,1.15 jobs/second,87 ms
+2,standard / Priority,3,1,2,2317 ms,4934 ms,1.09 jobs/second,250 ms
+3,standard / Priority,1,1,2,8499 ms,10940 ms,0.41 jobs/second,0 ms
+4,standard / Priority,5,1,2,1127 ms,4063 ms,1.30 jobs/second,707 ms
+5,printer / Priority,3,1,2,1151 ms,4243 ms,0.80 jobs/second,1616 ms
+6,printer / Priority,3,2,2,767 ms,2551 ms,1.43 jobs/second,307 ms
+7,standard / Priority (Repeat),3,1,2,2334 ms,4948 ms,1.08 jobs/second,245 ms
