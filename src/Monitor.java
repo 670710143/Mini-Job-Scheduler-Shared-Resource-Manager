@@ -1,3 +1,4 @@
+
 /**
  * Thread ที่รายงานสถานะระบบเป็นระยะ
  *
@@ -16,7 +17,6 @@
  * ข้อควรคิด: ตัวนับ running ควรอยู่ที่ไหน ใครเป็นคนเพิ่มและลด
  * และจะอ่านพร้อมกับ ready กับ completed ให้เป็นภาพเดียวกันได้อย่างไร
  */
-
 import java.util.Objects;
 
 public class Monitor extends Thread {
@@ -27,7 +27,7 @@ public class Monitor extends Thread {
     private final ProjectLogger logger;
 
     public Monitor(ReadyQueue readyQueue, ResourceManager resources,
-                   Statistics statistics, ProjectLogger logger) {
+            Statistics statistics, ProjectLogger logger) {
         super("monitor");
         this.readyQueue = Objects.requireNonNull(readyQueue);
         this.resources = Objects.requireNonNull(resources);
@@ -39,10 +39,11 @@ public class Monitor extends Thread {
     public void run() {
         try {
             while (!isInterrupted()) {
+                Statistics.Snapshot s = statistics.snapshot();   // อ่าน running+completed ใต้ล็อกเดียว
                 logger.monitor(readyQueue.size(),
-                               statistics.runningCount(),
-                               statistics.completedCount(),
-                               resources.status());
+                        s.running,
+                        s.completed,
+                        resources.status());
                 Thread.sleep(1000);
             }
         } catch (InterruptedException e) {

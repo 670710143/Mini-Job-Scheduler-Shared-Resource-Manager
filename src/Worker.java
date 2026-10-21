@@ -18,7 +18,6 @@
  *     permit จะค้างถาวรและระบบจะแขวน ต้องออกแบบให้คืนได้เสมอ
  *   - Worker ต้องหยุดเองได้เมื่อไม่มีงานเหลือแล้ว ไม่ใช่วนรอตลอดไป
  */
-
 public class Worker extends Thread {
 
     private final ReadyQueue readyQueue;
@@ -40,11 +39,11 @@ public class Worker extends Thread {
         try {
             Job job;
             while ((job = readyQueue.take()) != null) {   // null = คิวว่างและปิดแล้ว
-                statistics.jobStarted();
+                statistics.jobStarted(job);
                 try {
                     processJob(job);   // recordCompletion อยู่ท้าย processJob
                 } finally {
-                    statistics.jobFinished();
+                    statistics.jobFinished(job);// ทำเสมอ แม้ exception หรือถูก interrupt
                 }
             }
         } catch (InterruptedException e) {
@@ -58,27 +57,31 @@ public class Worker extends Thread {
     private void processJob(Job job) throws InterruptedException {
         // ขั้น 1: บันทึกเวลาเริ่ม
         job.startTimeMs = logger.now();
-
+        logger.jobStarted(job);
         // ขั้น 2: งานหลัก
         Thread.sleep(job.workMs);
+        logger.workFinished(job);
 
         if (job.resource != ResourceType.NONE) {
             // ขั้น 3: เริ่มรอ แล้ว acquire
             job.resourceWaitStartMs = logger.now();
+            logger.resourceWaitStarted(job);
             resources.acquire(job.resource);
             job.resourceWaitMs = logger.now() - job.resourceWaitStartMs;
+            logger.resourceAcquired(job, job.resourceWaitMs);
 
             try {
                 // ขั้น 4: ถือครอง resource
                 Thread.sleep(job.resourceMs);
             } finally {
-                // ขั้น 5: คืนเสมอ แม้ถูก interrupt หรือเกิด exception
-                resources.release(job.resource);
+                resources.release(job.resource);   // คืน permit
+                logger.resourceReleased(job);      // เขียน log
             }
         }
 
         // ขั้น 5: บันทึกเวลาจบ แล้วส่งให้ Statistics
         job.completionTimeMs = logger.now();
         statistics.recordCompletion(job);
+        logger.jobCompleted(job);
     }
 }
